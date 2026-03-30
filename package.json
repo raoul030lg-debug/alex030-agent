@@ -1,17 +1,19 @@
-
-  "name": "alex030-automation-agent",
+{
+  "name": "alex030-agent",
   "version": "1.0.0",
-  "description": "24/7 Automation Agent powered by Claude",
   "main": "index.js",
-  "engines": {
-    "node": ">=18.0.0"
-  ,
   "scripts": {
     "start": "node index.js"
-  ,
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "express": "^4.18.2",
     "axios": "^1.6.0"
+  }
+}
+
   
 
 
