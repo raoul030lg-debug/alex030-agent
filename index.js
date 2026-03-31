@@ -46,9 +46,7 @@ headers: {
 }
 });
 
-```
 return response.data.content[0].text;
-```
 
 } catch (err) {
 console.error(‘Claude error:’, err.message);
@@ -79,20 +77,19 @@ const response = await axios.get(
 `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates?offset=${offset}&timeout=10`
 );
 
-```
   const updates = response.data.result;
-  
+
   for (const update of updates) {
     offset = update.update_id + 1;
-    
+
     if (update.message?.text) {
       const text = update.message.text;
       const chatId = update.message.chat.id;
-      
+
       if (chatId.toString() !== TELEGRAM_CHAT_ID) continue;
-      
+
       console.log('Telegram Nachricht:', text);
-      
+
       // Claude antwortet auf Befehle
       if (text === '/status') {
         await sendTelegram('✅ *Agent läuft*\n\nAlle Systeme online.\nWartet auf Webhooks...');
@@ -108,7 +105,6 @@ const response = await axios.get(
 } catch (err) {
   console.error('Polling error:', err.message);
 }
-```
 
 }, 3000);
 }
