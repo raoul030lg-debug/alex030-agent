@@ -10,7 +10,7 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-const TASKS_FILE = path.join(__dirname, '.claude/memory/tasks.md');
+const TASKS_FILE = process.env.TASKS_FILE || path.join('/tmp', 'tasks.md');
 
 // ── Task-Datei lesen/schreiben ───────────────────────────────
 function readTasks() {
@@ -258,10 +258,11 @@ app.post('/webhook', async (req, res) => {
 async function startTelegramPolling() {
   let offset = 0;
 
-  setInterval(async () => {
+  const poll = async () => {
     try {
       const response = await axios.get(
-        `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates?offset=${offset}&timeout=10`
+        `https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates?offset=${offset}&timeout=30`,
+        { timeout: 35000 }
       );
 
       const updates = response.data.result;
@@ -301,9 +302,13 @@ async function startTelegramPolling() {
         }
       }
     } catch (err) {
-      console.error('Polling error:', err.message);
+      if (!err.message.includes('409')) {
+        console.error('Polling error:', err.message);
+      }
     }
-  }, 3000);
+    poll();
+  };
+  poll();
 }
 
 // ── Health Check ─────────────────────────────────────────────
