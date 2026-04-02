@@ -97,15 +97,60 @@ Antworte NUR mit dem Kategorienamen, ohne Erklärung.`,
   }
 }
 
+const ALEX_SYSTEM_PROMPT = `Du bist Alex, der KI-Assistent der Digitalagentur für Handwerker.
+
+Deine Aufgabe: Du unterstützt das Team bei allem rund um die Digitalisierung von Handwerksbetrieben – von Website-Erstellung über Google Business Profile (GBP) und SEO bis hin zu Lead-Generierung, Logo-Design und Content-Erstellung.
+
+Deine Persönlichkeit:
+- Professionell, direkt und lösungsorientiert
+- Kennst die Welt der Handwerker: Elektriker, Klempner, Maler, Schreiner, Dachdecker etc.
+- Weißt was lokales Marketing, Google-Rankings und digitale Kundengewinnung bedeuten
+- Antwortest immer auf Deutsch, klar und ohne unnötigen Fachjargon
+
+Was du kannst:
+- Aufgaben per /task erfassen und mit /tasks anzeigen
+- Texte, Ideen und Konzepte für Handwerksbetriebe entwickeln
+- SEO-Tipps, GBP-Optimierungen, Website-Inhalte vorschlagen
+- Bei Fragen rund um das Tagesgeschäft der Agentur helfen
+- Informationen zusammenfassen und strukturieren
+
+Antworte immer hilfreich, konkret und auf den Punkt. Wenn du eine Aufgabe erkennst, weise darauf hin dass sie per /task gespeichert werden kann.`;
+
 // ── Claude: freier Chat ──────────────────────────────────────
+async function chatWithAlex(userMessage) {
+  try {
+    const response = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      system: ALEX_SYSTEM_PROMPT,
+      messages: [{
+        role: 'user',
+        content: userMessage,
+      }],
+    }, {
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+    });
+    return response.data.content[0].text;
+  } catch (err) {
+    console.error('Claude chat error:', err.message);
+    return 'Entschuldigung, ich konnte deine Nachricht gerade nicht verarbeiten. Bitte versuch es nochmal.';
+  }
+}
+
+// ── Claude: Webhook-Analyse ──────────────────────────────────
 async function analyzeWithClaude(eventData) {
   try {
     const response = await axios.post('https://api.anthropic.com/v1/messages', {
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
+      system: ALEX_SYSTEM_PROMPT,
       messages: [{
         role: 'user',
-        content: `Du bist ein Automatisierungs-Agent. Analysiere dieses Event und gib eine klare Handlungsempfehlung auf Deutsch.
+        content: `Analysiere dieses eingehende Event und gib eine klare Handlungsempfehlung.
 
 Event-Daten: ${JSON.stringify(eventData, null, 2)}
 
@@ -124,7 +169,7 @@ AKTION: [was zu tun ist]`,
     return response.data.content[0].text;
   } catch (err) {
     console.error('Claude error:', err.message);
-    return 'Fehler bei Claude-Analyse.';
+    return 'Fehler bei der Analyse.';
   }
 }
 
@@ -251,8 +296,8 @@ async function startTelegramPolling() {
             chatId
           );
         } else {
-          const analysis = await analyzeWithClaude({ userMessage: text, type: 'manual_command' });
-          await sendTelegram(`🤖 *Agent:*\n\n${analysis}`, chatId);
+          const reply = await chatWithAlex(text);
+          await sendTelegram(`🤖 *Alex:*\n\n${reply}`, chatId);
         }
       }
     } catch (err) {
