@@ -15,6 +15,7 @@ const TASKS_FILE = path.join(__dirname, '.claude/memory/tasks.md');
 // ── Task-Datei lesen/schreiben ───────────────────────────────
 function readTasks() {
   if (!fs.existsSync(TASKS_FILE)) {
+    fs.mkdirSync(path.dirname(TASKS_FILE), { recursive: true });
     fs.writeFileSync(TASKS_FILE, '# Tasks\n\n<!-- Format: - [ ] #Nr [Kategorie] Aufgabe (Datum) -->\n');
   }
   return fs.readFileSync(TASKS_FILE, 'utf8');
