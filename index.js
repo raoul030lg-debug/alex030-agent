@@ -87,6 +87,7 @@ Antworte NUR mit dem Kategorienamen, ohne Erklärung.`,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
+      timeout: 8000,
     });
     const cat = response.data.content[0].text.trim().toLowerCase();
     const valid = ['website', 'logo', 'gbp', 'lead', 'seo', 'content', 'other'];
@@ -133,6 +134,7 @@ async function chatWithAlex(userMessage) {
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
+      timeout: 25000,
     });
     return response.data.content[0].text;
   } catch (err) {
@@ -165,6 +167,7 @@ AKTION: [was zu tun ist]`,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
+      timeout: 25000,
     });
     return response.data.content[0].text;
   } catch (err) {
