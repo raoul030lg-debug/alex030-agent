@@ -275,7 +275,7 @@ async function startTelegramPolling() {
         const text = update.message.text;
         const chatId = update.message.chat.id.toString();
 
-        if (chatId !== TELEGRAM_CHAT_ID) continue;
+        if (chatId !== String(TELEGRAM_CHAT_ID).trim()) continue;
 
         console.log('Telegram Nachricht:', text);
 
