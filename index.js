@@ -130,6 +130,7 @@ AKTION: [was zu tun ist]`,
 
 // ── Task-Befehle handler ─────────────────────────────────────
 async function handleTaskCommand(text, chatId) {
+  try {
   // /task [Aufgabe]
   const taskMatch = text.match(/^\/task\s+(.+)$/i);
   if (taskMatch) {
@@ -191,6 +192,10 @@ async function handleTaskCommand(text, chatId) {
     saveTasks(tasks);
     await sendTelegram(`✅ *Task #${nr} erledigt!*\n_${task.text}_`, chatId);
     return;
+  }
+  } catch (err) {
+    console.error('handleTaskCommand error:', err.message);
+    await sendTelegram(`❌ Fehler: ${err.message}`, chatId);
   }
 }
 
