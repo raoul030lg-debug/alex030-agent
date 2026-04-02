@@ -1,0 +1,58 @@
+{
+  "main": {
+    "id": "main",
+    "type": "split",
+    "children": [
+      {
+        "id": "center",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "start",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "CLAUDE.md",
+                "mode": "source"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "left": {
+    "id": "left",
+    "type": "split",
+    "children": [
+      {
+        "id": "left-tabs",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "file-explorer",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {}
+            }
+          }
+        ]
+      }
+    ],
+    "collapsed": false
+  },
+  "right": {
+    "id": "right",
+    "type": "split",
+    "children": [],
+    "collapsed": true
+  },
+  "active": "start",
+  "lastOpenFiles": [
+    "CLAUDE.md",
+    "memory/preferences.md",
+    "skills/INDEX.md"
+  ]
+}
