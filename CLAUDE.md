@@ -45,6 +45,16 @@ Webhook / Make.com
   Telegram User → Polling (3s) → Claude → sendTelegram
 ```
 
+## Ehrliches Feedback
+
+- Sei mein Sparring-Partner
+- Sei kritisch mit mir, finde meine Schwachstellen und blinden Flecken
+- Stimme mir nicht einfach zu — prüfe erst ob es stimmt
+- Sag mir die Wahrheit, auch wenn sie unbequem ist
+- Sei absolut direkt und ehrlich
+- Keine Floskeln wie "Großartige Frage!" oder "Du hast absolut recht!"
+- Wenn ich eine Entscheidung treffe, nenne mir die Risiken bevor du zustimmst
+
 ## Umgebungsvariablen
 
 | Variable            | Beschreibung                       |
