@@ -167,20 +167,45 @@ async function autoBuildWebsite(taskText, chatId) {
 
   try {
     // Website generieren
-    const prompt = `Erstelle eine vollständige, moderne Website für: "${taskText}"
+    const prompt = `Du bist ein Premium-Webdesigner. Erstelle eine hochwertige Landing Page für: "${taskText}"
+
+DESIGN-VORGABEN (strikt einhalten):
+- Farbschema: dunkler Hintergrund (#0a0a0a, #111, #1a1a1a), goldene Akzente (#c9a84c, #e0b84d, #f0d080)
+- Schriften: Google Fonts — Playfair Display (Überschriften) + Inter (Fließtext), via CDN einbinden
+- Animationen: fade-in beim Scrollen (IntersectionObserver), hover-Effekte auf Buttons und Karten
+- Mobile-first, vollständig responsive (Breakpoints bei 768px und 480px)
+- Kein weißer Hintergrund, keine hellen Flächen außer Text
+
+INHALT (realistisch und konkret, KEINE Platzhalter):
+- Erfinde plausible echte Daten passend zum Unternehmen: Adresse (Berlin), Telefon, WhatsApp-Nummer
+- Konkrete Preise (z.B. "Herrenhaarschnitt ab 35€"), konkrete Öffnungszeiten
+- 3 echte Leistungen mit kurzen, präzisen Beschreibungen
+- Kein generisches Copy wie "Willkommen bei uns", "Qualität seit Jahren", "Ihr Partner für..." oder "Wir bieten..."
+- Stattdessen: direkt, selbstbewusst, modern — wie eine Premium-Marke
+
+STRUKTUR:
+1. Navigation (sticky, transparent → dunkel beim Scrollen, Logo + 3 Links)
+2. Hero (Vollbild, großer Claim, Subtext, 2 CTAs: "Jetzt anrufen" + "WhatsApp")
+3. Leistungen (3 Karten mit Icon, Titel, kurzer Text, Preis)
+4. Über uns (kurzer, ehrlicher Text — kein Marketingblabla)
+5. Kontakt (Telefon, WhatsApp-Button, Öffnungszeiten, Google Maps Placeholder)
+6. Footer
+
+CTAs:
+- WhatsApp-Button: https://wa.me/49[Nummer] (öffnet WhatsApp direkt)
+- Anruf-Button: tel:+49[Nummer]
+- Sticky WhatsApp-Button unten rechts (immer sichtbar)
 
 Liefere die Dateien in GENAU diesem Format:
 ===FILE: index.html===
-[kompletter HTML-Code]
+[kompletter HTML-Code mit eingebetteten Google Fonts Links]
 ===END===
 ===FILE: style.css===
 [kompletter CSS-Code]
 ===END===
 ===FILE: script.js===
-[JavaScript falls nötig]
-===END===
-
-Moderne, professionelle Website mit: Hero-Section, Navigation, responsive Design, schönen Farben.`;
+[JavaScript: IntersectionObserver für Animationen, sticky Nav, smooth scroll]
+===END===`;
 
     const output = await claude(prompt, 8000);
     const files = tools.parseProjectFiles(output);
