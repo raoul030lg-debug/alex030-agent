@@ -94,10 +94,27 @@ async function enableGithubPages(repoName, token, user) {
 // ── Projekt-Dateien aus Claude-Output parsen ──────────────────
 function parseProjectFiles(claudeOutput) {
   const files = [];
-  const regex = /===FILE:\s*(.+?)===\n([\s\S]*?)===END===/g;
-  let match;
-  while ((match = regex.exec(claudeOutput)) !== null) {
-    files.push({ path: match[1].trim(), content: match[2].trim() });
+  // Alle ===FILE: Marker finden
+  const markers = [...claudeOutput.matchAll(/===FILE:\s*(.+?)===\n/g)];
+  if (markers.length === 0) return files;
+
+  for (let i = 0; i < markers.length; i++) {
+    const filename = markers[i][1].trim();
+    const contentStart = markers[i].index + markers[i][0].length;
+
+    let contentEnd;
+    if (i + 1 < markers.length) {
+      // Bis zum ===END=== vor dem nächsten ===FILE===
+      const endPos = claudeOutput.lastIndexOf('===END===', markers[i + 1].index);
+      contentEnd = endPos > contentStart ? endPos : markers[i + 1].index;
+    } else {
+      // Letzter Block: bis ===END=== oder EOF
+      const endPos = claudeOutput.indexOf('===END===', contentStart);
+      contentEnd = endPos !== -1 ? endPos : claudeOutput.length;
+    }
+
+    const content = claudeOutput.slice(contentStart, contentEnd).trim();
+    if (content) files.push({ path: filename, content });
   }
   return files;
 }

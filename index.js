@@ -182,7 +182,7 @@ Liefere die Dateien in GENAU diesem Format:
 
 Moderne, professionelle Website mit: Hero-Section, Navigation, responsive Design, schönen Farben.`;
 
-    const output = await claude(prompt, 3000);
+    const output = await claude(prompt, 8000);
     const files = tools.parseProjectFiles(output);
 
     if (files.length === 0) {
