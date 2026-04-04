@@ -208,7 +208,10 @@ Moderne, professionelle Website mit: Hero-Section, Navigation, responsive Design
           mem.saveProject({ name: slug, type: 'website', status: 'deployed', url: pagesUrl || githubUrl });
           mem.logActivity(`Website gebaut und gepusht: ${slug}`);
           await sendTelegram(
-            `🚀 *Deployed!*\n\n📦 GitHub: ${githubUrl}\n🌐 Pages: ${pagesUrl || 'wird aktiviert...'}`,
+            `✅ *Build fertig: ${taskText}*\n\n` +
+            `📦 GitHub: ${githubUrl}\n` +
+            `🌐 Live: ${pagesUrl || 'GitHub Pages wird aktiviert...'}\n\n` +
+            `_Pages ist in 1-2 Minuten erreichbar._`,
             chatId
           );
         } else {

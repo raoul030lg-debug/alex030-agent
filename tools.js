@@ -86,15 +86,18 @@ async function pushToGithub(projectDir, repoName, token, user) {
 }
 
 async function enableGithubPages(repoName, token, user) {
+  const pagesUrl = `https://${user}.github.io/${repoName}/`;
   try {
-    await axios.post(`https://api.github.com/repos/${user}/${repoName}/pages`, {
-      source: { branch: 'main', path: '/' },
-    }, {
-      headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' },
-      timeout: 10000,
-    });
-    return `https://${user}.github.io/${repoName}`;
-  } catch {
+    const { data } = await axios.post(
+      `https://api.github.com/repos/${user}/${repoName}/pages`,
+      { source: { branch: 'main', path: '/' } },
+      { headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' }, timeout: 10000 }
+    );
+    return data.html_url || pagesUrl;
+  } catch (err) {
+    // 409 = Pages bereits aktiviert → URL trotzdem zurückgeben
+    if (err.response?.status === 409) return pagesUrl;
+    console.error('GitHub Pages error:', err.response?.data?.message || err.message);
     return null;
   }
 }
