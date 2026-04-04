@@ -47,31 +47,39 @@ async function createGithubRepo(repoName, token, user) {
       headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' },
       timeout: 10000,
     });
+    // Kurz warten bis GitHub das Repo vollständig initialisiert hat
+    await new Promise(r => setTimeout(r, 3000));
     return { success: true, url: data.html_url, cloneUrl: data.clone_url };
   } catch (err) {
+    // Repo existiert bereits → trotzdem weitermachen
+    if (err.response?.data?.message === 'Repository creation failed.') {
+      await new Promise(r => setTimeout(r, 2000));
+      return { success: true, url: `https://github.com/${user}/${repoName}`, cloneUrl: `https://github.com/${user}/${repoName}.git` };
+    }
     return { success: false, error: err.response?.data?.message || err.message };
   }
 }
 
 async function pushToGithub(projectDir, repoName, token, user) {
   const remote = `https://${token}@github.com/${user}/${repoName}.git`;
-  // git config einmal setzen
+
   await runCommand('git config --global user.email "alex@agent.local"');
   await runCommand('git config --global user.name "Alex Agent"');
+  await runCommand('git config --global init.defaultBranch main');
 
   const steps = [
-    { cmd: 'git init', required: true },
+    { cmd: 'git init -b main', required: true },
     { cmd: 'git add -A', required: true },
     { cmd: 'git commit -m "Initial commit by Alex Agent"', required: true },
-    { cmd: `git remote add origin ${remote}`, required: false },
-    { cmd: 'git branch -M main', required: true },
+    // Remote setzen: add oder update falls schon vorhanden
+    { cmd: `git remote add origin ${remote} || git remote set-url origin ${remote}`, required: true },
     { cmd: 'git push -u origin main --force', required: true },
   ];
 
   for (const step of steps) {
     const result = await runCommand(step.cmd, projectDir);
     if (!result.success && step.required) {
-      return { success: false, error: `${step.cmd}: ${result.output}` };
+      return { success: false, error: result.output };
     }
   }
   return { success: true };
