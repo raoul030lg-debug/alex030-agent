@@ -132,7 +132,7 @@ async function claude(userMessage, maxTokens = 1200, history = []) {
       'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
     },
-    timeout: 30000,
+    timeout: 120000,
   });
   return response.data.content[0].text;
 }
