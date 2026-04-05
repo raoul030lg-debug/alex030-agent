@@ -45,6 +45,27 @@ Webhook / Make.com
   Telegram User → Polling (3s) → Claude → sendTelegram
 ```
 
+## Website Design Standards (Leon Agentur)
+
+Jede Website die wir bauen muss Premium-Qualität haben (Wert: 1.500-3.000€):
+
+- Glassmorphism Effekte
+- Smooth Animationen (GSAP oder CSS)
+- Parallax Hero
+- Floating Cards mit Hover-Effekten
+- Premium Typografie (große Headlines, Playfair Display oder Space Grotesk)
+- Dark Mode mit Gold oder Brand-Akzenten
+- Micro-Animationen
+- Mobile-first, pixel-perfect
+- Testimonials mit echten Bewertungen
+- Trust-Badges (Jahre Erfahrung, Bewertungen, Zertifikate)
+
+Inspiration: Apple, Vercel, Linear, Awwwards-Gewinner.
+Ziel: Kunde soll beim ersten Blick "WOW" sagen.
+
+Nach jeder Website-Erstellung automatisch ausführen:
+`open /Users/raoul/projects/[projektname]/index.html`
+
 ## Ehrliches Feedback
 
 - Sei mein Sparring-Partner
