@@ -143,74 +143,128 @@ async function claude(userMessage, maxTokens = 1200, history = []) {
   return response.data.content[0].text;
 }
 
-async function categorizeTask(taskText) {
+// ── Intent Detection (unified) ────────────────────────────────
+async function detectIntent(text) {
   try {
-    const cat = await claude(
-      `Kategorisiere in EINE Kategorie: website, code, content, research, design, other\nAufgabe: "${taskText}"\nNur das Wort.`,
-      20
-    );
-    const valid = ['website', 'code', 'content', 'research', 'design', 'other'];
-    const result = cat.trim().toLowerCase().split(/\s/)[0];
-    return valid.includes(result) ? result : 'other';
-  } catch { return 'other'; }
+    const response = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 400,
+      system: 'You are an intent classifier. Always respond with valid JSON only. No explanation, no markdown.',
+      messages: [{
+        role: 'user',
+        content: `Classify this message and extract all available fields.
+
+Intents:
+- website_erstellen: user wants a website/landing page built for a business
+- video_script: user wants a TikTok/video script
+- task_speichern: user explicitly wants to save a task or todo item
+- idee_speichern: user wants to save an idea
+- chat: general conversation, question, or anything else
+
+Branchen (if website_erstellen): klempner, barbershop, restaurant, kosmetik, elektriker, maler, other
+
+Message: "${text}"
+
+Respond with this exact JSON structure:
+{
+  "intent": "website_erstellen|video_script|task_speichern|idee_speichern|chat",
+  "felder": {
+    "kundenname": null,
+    "branche": null,
+    "telefon": null,
+    "stadt": null,
+    "thema": null,
+    "tasktext": null
+  }
+}`,
+      }],
+    }, {
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      timeout: 12000,
+    });
+
+    const raw = response.data.content[0].text.trim();
+    // JSON aus der Antwort extrahieren (robust gegen Markdown-Wrapping)
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    return jsonMatch ? JSON.parse(jsonMatch[0]) : { intent: 'chat', felder: {} };
+  } catch (err) {
+    console.error('Intent detection error:', err.message);
+    return { intent: 'chat', felder: {} };
+  }
 }
 
-async function isTaskSuggestion(text) {
-  try {
-    const r = await claude(
-      `Enthält folgender Text eine konkrete Aufgabe die als Task gespeichert werden soll? Nur "ja" oder "nein".\nText: "${text}"`,
-      10
-    );
-    return r.trim().toLowerCase().startsWith('ja');
-  } catch { return false; }
+// Skill-Datei für Branche laden
+function loadBrancheSkill(branche) {
+  if (!branche) return '';
+  const p = path.join(__dirname, `.claude/skills/${branche}/SKILL.md`);
+  try { return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : ''; }
+  catch { return ''; }
 }
 
 // ── Autonomes Bauen ───────────────────────────────────────────
-async function autoBuildWebsite(taskText, chatId) {
-  const slug = taskText.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+// context: { kundenname, branche, telefon, stadt, rawText }
+async function autoBuildWebsite(context, chatId) {
+  const { kundenname, branche, telefon, stadt, rawText } = context;
+
+  // Slug aus Kundenname + Branche + Stadt
+  const slugBase = [branche, kundenname, stadt]
+    .filter(Boolean).join(' ')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50);
+  const slug = slugBase || rawText.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
+
   const projectDir = path.join(tools.PROJECTS_DIR, slug);
-  await sendTelegram(`🏗️ Baue Projekt: *${taskText}*\nOrdner: \`${projectDir}\``, chatId);
+  const displayName = [kundenname, branche, stadt].filter(Boolean).join(' · ') || rawText;
+  await sendTelegram(`🏗️ Baue *${displayName}*...`, chatId);
+
+  // Branchenspezifischen Skill laden
+  const brancheSkill = loadBrancheSkill(branche);
+
+  // Bekannte Kundendaten für den Prompt zusammenstellen
+  const kundenInfo = [
+    kundenname && `Name: ${kundenname}`,
+    branche    && `Branche: ${branche}`,
+    telefon    && `Telefon: ${telefon}`,
+    stadt      && `Stadt: ${stadt}`,
+  ].filter(Boolean).join('\n');
 
   try {
-    // Website generieren
-    const prompt = `Du bist ein Premium-Webdesigner. Erstelle eine hochwertige Landing Page für: "${taskText}"
+    const prompt = `Du bist ein Premium-Webdesigner (Leon Agentur Berlin). Erstelle eine hochwertige Landing Page.
 
-DESIGN-VORGABEN (strikt einhalten):
-- Farbschema: dunkler Hintergrund (#0a0a0a, #111, #1a1a1a), goldene Akzente (#c9a84c, #e0b84d, #f0d080)
-- Schriften: Google Fonts — Playfair Display (Überschriften) + Inter (Fließtext), via CDN einbinden
-- Animationen: fade-in beim Scrollen (IntersectionObserver), hover-Effekte auf Buttons und Karten
-- Mobile-first, vollständig responsive (Breakpoints bei 768px und 480px)
-- Kein weißer Hintergrund, keine hellen Flächen außer Text
+KUNDENDATEN (exakt verwenden, nicht erfinden wenn vorhanden):
+${kundenInfo || `Beschreibung: ${rawText}`}
+${!telefon ? '- Telefon: erfinde eine plausible Berliner Nummer (030 XXXXXX)' : ''}
+${!stadt ? '- Stadt: Berlin' : ''}
 
-INHALT (realistisch und konkret, KEINE Platzhalter):
-- Erfinde plausible echte Daten passend zum Unternehmen: Adresse (Berlin), Telefon, WhatsApp-Nummer
-- Konkrete Preise (z.B. "Herrenhaarschnitt ab 35€"), konkrete Öffnungszeiten
-- 3 echte Leistungen mit kurzen, präzisen Beschreibungen
-- Kein generisches Copy wie "Willkommen bei uns", "Qualität seit Jahren", "Ihr Partner für..." oder "Wir bieten..."
-- Stattdessen: direkt, selbstbewusst, modern — wie eine Premium-Marke
+${brancheSkill ? `BRANCHEN-SKILL:\n${brancheSkill.slice(0, 2000)}` : ''}
 
-STRUKTUR:
-1. Navigation (sticky, transparent → dunkel beim Scrollen, Logo + 3 Links)
-2. Hero (Vollbild, großer Claim, Subtext, 2 CTAs: "Jetzt anrufen" + "WhatsApp")
-3. Leistungen (3 Karten mit Icon, Titel, kurzer Text, Preis)
-4. Über uns (kurzer, ehrlicher Text — kein Marketingblabla)
-5. Kontakt (Telefon, WhatsApp-Button, Öffnungszeiten, Google Maps Placeholder)
-6. Footer
+DESIGN-STANDARDS (immer einhalten):
+- Dark Mode: #080808 / #0f0f0f / #161616 Hintergrund
+- Akzentfarbe: #c9a84c (Gold) oder branchenspezifisch laut Skill
+- Google Fonts: Playfair Display (Headlines) + Inter (Body) via CDN
+- GSAP ScrollTrigger von cdnjs.cloudflare.com einbinden
+- Glassmorphism, Parallax Hero, 3D Card Tilt
+- Sticky Nav, Trust-Badges, Testimonials, sticky WhatsApp Button
+- Mobile-first (480px, 768px Breakpoints)
 
-CTAs:
-- WhatsApp-Button: https://wa.me/49[Nummer] (öffnet WhatsApp direkt)
-- Anruf-Button: tel:+49[Nummer]
-- Sticky WhatsApp-Button unten rechts (immer sichtbar)
+INHALT:
+- Konkrete Preise aus Branche (keine "auf Anfrage")
+- 3 echte Leistungskarten
+- Öffnungszeiten, Adresse, WhatsApp + Telefon CTAs
+- Kein generisches Marketing-Copy
 
-Liefere die Dateien in GENAU diesem Format:
+Liefere in GENAU diesem Format:
 ===FILE: index.html===
-[kompletter HTML-Code mit eingebetteten Google Fonts Links]
+[kompletter HTML-Code]
 ===END===
 ===FILE: style.css===
 [kompletter CSS-Code]
 ===END===
 ===FILE: script.js===
-[JavaScript: IntersectionObserver für Animationen, sticky Nav, smooth scroll]
+[GSAP Animationen, ScrollTrigger, Tilt, smooth scroll]
 ===END===`;
 
     const output = await claude(prompt, 8000);
@@ -238,7 +292,7 @@ Liefere die Dateien in GENAU diesem Format:
           mem.saveProject({ name: slug, type: 'website', status: 'deployed', url: pagesUrl || githubUrl });
           mem.logActivity(`Website gebaut und gepusht: ${slug}`);
           await sendTelegram(
-            `✅ *${taskText}* Website ist live:\n${pagesUrl || githubUrl}\n\n_Pages kann 1–2 Min. brauchen._`,
+            `✅ *${displayName}* Website ist live:\n${pagesUrl || githubUrl}\n\n_Pages kann 1–2 Min. brauchen._`,
             chatId
           );
         } else {
@@ -249,7 +303,7 @@ Liefere die Dateien in GENAU diesem Format:
       }
     } else {
       mem.saveProject({ name: slug, type: 'website', status: 'local', url: projectDir });
-      await sendTelegram(`✅ *${taskText}* Website gespeichert:\n\`${projectDir}\`\n\n_Für Live-URL: GITHUB\\_TOKEN in .env setzen._`, chatId);
+      await sendTelegram(`✅ *${displayName}* Website gespeichert:\n\`${projectDir}\`\n\n_Für Live-URL: GITHUB\\_TOKEN in .env setzen._`, chatId);
     }
   } catch (err) {
     await sendTelegram(`❌ Build-Fehler: ${err.message}`, chatId);
@@ -301,7 +355,9 @@ async function handleCommand(text, chatId) {
   if (buildMatch) {
     const desc = buildMatch[1].trim();
     mem.logActivity(`/build: ${desc}`);
-    await autoBuildWebsite(desc, chatId);
+    await sendTelegram(`🔍 Analysiere Anfrage...`, chatId);
+    const { felder } = await detectIntent(desc);
+    await autoBuildWebsite({ ...felder, rawText: desc }, chatId);
     return;
   }
 
@@ -380,18 +436,18 @@ async function handleCommand(text, chatId) {
   if (taskMatch) {
     const taskText = taskMatch[1].trim();
     const tasks = parseTasks();
-    const category = await categorizeTask(taskText);
+    const { intent, felder } = await detectIntent(taskText);
+    const category = intent === 'website_erstellen' ? 'website'
+                   : intent === 'video_script'      ? 'content'
+                   : felder.branche                 ? felder.branche
+                   : 'other';
     const nr = nextTaskNr(tasks);
     tasks.push({ done: false, nr, category, text: taskText, date: new Date().toLocaleDateString('de-DE') });
     saveTasks(tasks);
     mem.logActivity(`Task #${nr} angelegt: ${taskText}`);
     await sendTelegram(`✅ *Task #${nr} gespeichert*\n📂 \`${category}\` — ${taskText}`, chatId);
-
-    // Autonomer Modus
-    if (category === 'website') {
-      await sendTelegram(`🤖 Website-Aufgabe erkannt! Soll ich direkt loslegen?\n→ /build ${taskText}`, chatId);
-    } else if (category === 'content') {
-      await sendTelegram(`📝 Content-Aufgabe erkannt!\n→ /build ${taskText} zum automatischen Erstellen`, chatId);
+    if (intent === 'website_erstellen') {
+      await sendTelegram(`🤖 Website-Aufgabe — direkt loslegen?\n→ /build ${taskText}`, chatId);
     }
     return;
   }
@@ -565,52 +621,90 @@ Format:
   }
 }
 
-// ── Website-Intent Erkennung ──────────────────────────────────
-function detectWebsiteIntent(text) {
-  const triggers = [
-    /erstell[e]?\s+.*(website|webseite|landing\s*page|seite)/i,
-    /bau[e]?\s+.*(website|webseite|landing\s*page)/i,
-    /mach[e]?\s+.*(website|webseite|landing\s*page)/i,
-    /website\s+(für|fuer)\s+/i,
-    /webseite\s+(für|fuer)\s+/i,
-    /landing\s*page\s+(für|fuer)\s+/i,
-  ];
-  return triggers.some(r => r.test(text));
-}
-
-// ── Freitext ──────────────────────────────────────────────────
+// ── Freitext → Intent Dispatch ────────────────────────────────
 async function handleFreetext(text, chatId) {
-  // Website-Intent abfangen — BEVOR Claude antwortet
-  if (detectWebsiteIntent(text)) {
-    mem.logActivity(`Website-Intent erkannt: ${text.slice(0, 60)}`);
-    await autoBuildWebsite(text, chatId);
+  let intentResult;
+  try {
+    intentResult = await detectIntent(text);
+  } catch (err) {
+    console.error('Intent detection failed:', err.message);
+    intentResult = { intent: 'chat', felder: {} };
+  }
+
+  const { intent, felder } = intentResult;
+  console.log(`INTENT: ${intent}`, felder);
+
+  // ── website_erstellen ──────────────────────────────────────
+  if (intent === 'website_erstellen') {
+    mem.logActivity(`website_erstellen: ${felder.kundenname || text.slice(0, 40)}`);
+    await autoBuildWebsite({ ...felder, rawText: text }, chatId);
     return;
   }
 
+  // ── video_script ───────────────────────────────────────────
+  if (intent === 'video_script') {
+    const thema = felder.thema || text;
+    await sendTelegram(`🎬 Generiere Script für: *${thema}*...`, chatId);
+    try {
+      const script = await claude(`Du bist ein viraler TikTok-Skript-Autor für AI Storytelling / Dark Fantasy / Mystery.
+
+Erstelle ein TikTok-Video-Skript zum Thema: "${thema}"
+
+Regeln: HOOK in ersten 2 Sekunden, 30-60 Sekunden gesprochen (~80-150 Wörter), Untertitel-freundlich (kurze Sätze), Cliffhanger am Ende, Ton: geheimnisvoll, Sprache: Englisch.
+
+Format:
+TITEL: [catchy Titel]
+HOOK: [erste 2 Sekunden]
+SCRIPT:
+[vollständiges Skript]
+CLIFFHANGER: [letzter Satz]
+HASHTAGS: [5-8 Hashtags]`, 800);
+      mem.logActivity(`Video-Script: ${thema}`);
+      await sendTelegram(`🎬 *Script: ${thema}*\n\n${script.slice(0, 3500)}`, chatId);
+    } catch (err) {
+      await sendTelegram(`❌ Script-Fehler: ${err.message}`, chatId);
+    }
+    return;
+  }
+
+  // ── task_speichern ─────────────────────────────────────────
+  if (intent === 'task_speichern') {
+    const taskText = felder.tasktext || text;
+    const tasks = parseTasks();
+    const nr = nextTaskNr(tasks);
+    tasks.push({ done: false, nr, category: felder.branche || 'other', text: taskText, date: new Date().toLocaleDateString('de-DE') });
+    saveTasks(tasks);
+    mem.logActivity(`Task #${nr} angelegt: ${taskText}`);
+    await sendTelegram(`✅ *Task #${nr} gespeichert:* ${taskText}`, chatId);
+    return;
+  }
+
+  // ── idee_speichern ─────────────────────────────────────────
+  if (intent === 'idee_speichern') {
+    const ideaText = felder.thema || text;
+    const nr = saveIdea(ideaText);
+    await sendTelegram(`💡 *Idee #${nr} gespeichert:* ${ideaText}`, chatId);
+    return;
+  }
+
+  // ── chat (default) ─────────────────────────────────────────
   try {
     const history = mem.getRecentConversations(6);
     mem.saveConversation('user', text);
 
-    const [reply, isTask] = await Promise.all([
-      claude(text, 1200, history),
-      isTaskSuggestion(text),
-    ]);
+    const reply = await claude(text, 1200, history);
 
-    // Sicherheitsnetz: Falls Claude doch HTML ausgibt, blockieren
+    // Sicherheitsnetz: HTML-Output blockieren
     if (/<(!DOCTYPE|html|head|body|div|style)[^>]*>/i.test(reply)) {
-      console.warn('HTML in Claude reply blocked');
-      await sendTelegram('🏗️ Website wird gebaut...', chatId);
-      await autoBuildWebsite(text, chatId);
+      console.warn('HTML in Claude reply blocked, re-routing to build');
+      const redetect = await detectIntent(text);
+      await autoBuildWebsite({ ...redetect.felder, rawText: text }, chatId);
       return;
     }
 
     mem.saveConversation('alex', reply);
     mem.logActivity(`Chat: ${text.slice(0, 60)}`);
     await sendTelegram(`🤖 *Alex:*\n\n${reply}`, chatId);
-
-    if (isTask) {
-      await sendTelegram(`💾 Aufgabe erkannt — speichern?\n→ /task ${text.slice(0, 80)}`, chatId);
-    }
   } catch (err) {
     console.error('Freitext error:', err.message);
     await sendTelegram(`❌ Fehler: ${err.message}`, chatId);
