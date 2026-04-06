@@ -205,108 +205,69 @@ function loadBrancheSkill(branche) {
   catch { return ''; }
 }
 
-// ── Autonomes Bauen ───────────────────────────────────────────
+// ── Autonomes Bauen via Claude Code Subagent ─────────────────
 // context: { kundenname, branche, telefon, stadt, rawText }
 async function autoBuildWebsite(context, chatId) {
   const { kundenname, branche, telefon, stadt, rawText } = context;
 
-  // Slug aus Kundenname + Branche + Stadt
   const slugBase = [branche, kundenname, stadt]
     .filter(Boolean).join(' ')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50);
   const slug = slugBase || rawText.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
-
-  const projectDir = path.join(tools.PROJECTS_DIR, slug);
   const displayName = [kundenname, branche, stadt].filter(Boolean).join(' · ') || rawText;
+
   await sendTelegram(`🏗️ Baue *${displayName}*...`, chatId);
 
-  // Branchenspezifischen Skill laden
-  const brancheSkill = loadBrancheSkill(branche);
+  // Prompt zusammenbauen
+  const promptLines = [
+    branche    ? `Branche: ${branche}`          : null,
+    kundenname ? `Kundenname: ${kundenname}`     : null,
+    telefon    ? `Telefon: ${telefon}`           : null,
+    `Stadt: ${stadt || 'Berlin'}`,
+    '',
+    `Baue Premium Website. Speichere unter ~/projects/${slug}/`,
+    'Deploye zu Vercel. Gib am Ende NUR die fertige URL zurück, sonst nichts.',
+  ].filter(l => l !== null).join('\n');
 
-  // Bekannte Kundendaten für den Prompt zusammenstellen
-  const kundenInfo = [
-    kundenname && `Name: ${kundenname}`,
-    branche    && `Branche: ${branche}`,
-    telefon    && `Telefon: ${telefon}`,
-    stadt      && `Stadt: ${stadt}`,
-  ].filter(Boolean).join('\n');
+  // Prompt + Output als Temp-Dateien (vermeidet Shell-Escaping + Output-Truncation)
+  const ts          = Date.now();
+  const promptFile  = `/tmp/alex-prompt-${ts}.txt`;
+  const outputFile  = `/tmp/alex-output-${ts}.txt`;
+  tools.writeFile(promptFile, promptLines);
 
   try {
-    const prompt = `Du bist ein Premium-Webdesigner (Leon Agentur Berlin). Erstelle eine hochwertige Landing Page.
+    // claude --print liest Prompt aus Datei, schreibt Output in Datei
+    // 5-Minuten-Timeout für den vollen Build
+    await tools.runCommand(
+      `claude --print "$(cat '${promptFile}')" > '${outputFile}' 2>&1`,
+      __dirname,
+      300000
+    );
 
-KUNDENDATEN (exakt verwenden, nicht erfinden wenn vorhanden):
-${kundenInfo || `Beschreibung: ${rawText}`}
-${!telefon ? '- Telefon: erfinde eine plausible Berliner Nummer (030 XXXXXX)' : ''}
-${!stadt ? '- Stadt: Berlin' : ''}
+    const fullOutput = tools.readFile(outputFile) || '';
 
-${brancheSkill ? `BRANCHEN-SKILL:\n${brancheSkill.slice(0, 2000)}` : ''}
+    // URL aus Output extrahieren (letzte https-URL im Text)
+    const urlMatches = fullOutput.match(/https?:\/\/[^\s\n"'<>]+/g);
+    const url = urlMatches ? urlMatches[urlMatches.length - 1].replace(/[.,;)]+$/, '') : null;
 
-DESIGN-STANDARDS (immer einhalten):
-- Dark Mode: #080808 / #0f0f0f / #161616 Hintergrund
-- Akzentfarbe: #c9a84c (Gold) oder branchenspezifisch laut Skill
-- Google Fonts: Playfair Display (Headlines) + Inter (Body) via CDN
-- GSAP ScrollTrigger von cdnjs.cloudflare.com einbinden
-- Glassmorphism, Parallax Hero, 3D Card Tilt
-- Sticky Nav, Trust-Badges, Testimonials, sticky WhatsApp Button
-- Mobile-first (480px, 768px Breakpoints)
+    mem.saveProject({ name: slug, type: 'website', status: url ? 'deployed' : 'local', url: url || slug });
+    mem.logActivity(`Website gebaut: ${slug}`);
 
-INHALT:
-- Konkrete Preise aus Branche (keine "auf Anfrage")
-- 3 echte Leistungskarten
-- Öffnungszeiten, Adresse, WhatsApp + Telefon CTAs
-- Kein generisches Marketing-Copy
-
-Liefere in GENAU diesem Format:
-===FILE: index.html===
-[kompletter HTML-Code]
-===END===
-===FILE: style.css===
-[kompletter CSS-Code]
-===END===
-===FILE: script.js===
-[GSAP Animationen, ScrollTrigger, Tilt, smooth scroll]
-===END===`;
-
-    const output = await claude(prompt, 8000);
-    const files = tools.parseProjectFiles(output);
-
-    if (files.length === 0) {
-      await sendTelegram('❌ Build fehlgeschlagen: Keine Projektdateien generiert.', chatId);
-      return;
-    }
-
-    // Dateien schreiben (kein Telegram-Output für Zwischenschritte)
-    tools.createDir(projectDir);
-    for (const f of files) {
-      tools.writeFile(path.join(projectDir, f.path), f.content);
-    }
-
-    // GitHub Push
-    if (GITHUB_TOKEN && GITHUB_USER && GITHUB_TOKEN !== 'PLACEHOLDER') {
-      const repoResult = await tools.createGithubRepo(slug, GITHUB_TOKEN, GITHUB_USER);
-      if (repoResult.success) {
-        const pushResult = await tools.pushToGithub(projectDir, slug, GITHUB_TOKEN, GITHUB_USER);
-        if (pushResult.success) {
-          const pagesUrl = await tools.enableGithubPages(slug, GITHUB_TOKEN, GITHUB_USER);
-          const githubUrl = `https://github.com/${GITHUB_USER}/${slug}`;
-          mem.saveProject({ name: slug, type: 'website', status: 'deployed', url: pagesUrl || githubUrl });
-          mem.logActivity(`Website gebaut und gepusht: ${slug}`);
-          await sendTelegram(
-            `✅ *${displayName}* Website ist live:\n${pagesUrl || githubUrl}\n\n_Pages kann 1–2 Min. brauchen._`,
-            chatId
-          );
-        } else {
-          await sendTelegram(`⚠️ Push fehlgeschlagen: ${pushResult.error}`, chatId);
-        }
-      } else {
-        await sendTelegram(`⚠️ GitHub Repo konnte nicht erstellt werden: ${repoResult.error}`, chatId);
-      }
+    if (url) {
+      await sendTelegram(`✅ *${displayName}* Website ist live:\n${url}`, chatId);
     } else {
-      mem.saveProject({ name: slug, type: 'website', status: 'local', url: projectDir });
-      await sendTelegram(`✅ *${displayName}* Website gespeichert:\n\`${projectDir}\`\n\n_Für Live-URL: GITHUB\\_TOKEN in .env setzen._`, chatId);
+      // Kein Vercel-Token oder Deploy fehlgeschlagen — lokalen Pfad zurückgeben
+      await sendTelegram(
+        `✅ *${displayName}* Website gespeichert:\n\`~/projects/${slug}/\`\n\n_Kein Vercel-Deploy — VERCEL\\_TOKEN fehlt._`,
+        chatId
+      );
     }
   } catch (err) {
     await sendTelegram(`❌ Build-Fehler: ${err.message}`, chatId);
+  } finally {
+    // Temp-Dateien aufräumen
+    try { fs.unlinkSync(promptFile); } catch {}
+    try { fs.unlinkSync(outputFile); } catch {}
   }
 }
 
