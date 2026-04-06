@@ -116,6 +116,12 @@ Deine Fähigkeiten: Websites bauen, Code schreiben, Recherche, Texte schreiben, 
 Du sprichst Deutsch, bist direkt und effizient wie ein Kumpel.
 Wenn dir Infos fehlen, frag nach.
 Kategorisiere jede Aufgabe: website, code, content, research, design, other.
+
+KRITISCHE REGEL — NIEMALS BRECHEN:
+- Sende NIEMALS HTML, CSS oder JavaScript-Code als Text in dieser Konversation
+- Wenn jemand eine Website will: Antworte NUR mit "🏗️ Baue Website..." — der Build startet automatisch
+- Websites werden immer als Datei gespeichert und deployed, niemals als Text ausgegeben
+- Output-Format nach Build: "✅ [Name] Website ist live: [URL]"
 ${skills.loadSkills()}`;
 }
 
@@ -211,16 +217,15 @@ Liefere die Dateien in GENAU diesem Format:
     const files = tools.parseProjectFiles(output);
 
     if (files.length === 0) {
-      await sendTelegram('❌ Konnte keine Projektdateien aus Claude-Output parsen.', chatId);
+      await sendTelegram('❌ Build fehlgeschlagen: Keine Projektdateien generiert.', chatId);
       return;
     }
 
-    // Dateien schreiben
+    // Dateien schreiben (kein Telegram-Output für Zwischenschritte)
     tools.createDir(projectDir);
     for (const f of files) {
       tools.writeFile(path.join(projectDir, f.path), f.content);
     }
-    await sendTelegram(`✅ ${files.length} Dateien erstellt: ${files.map(f => f.path).join(', ')}`, chatId);
 
     // GitHub Push
     if (GITHUB_TOKEN && GITHUB_USER && GITHUB_TOKEN !== 'PLACEHOLDER') {
@@ -233,10 +238,7 @@ Liefere die Dateien in GENAU diesem Format:
           mem.saveProject({ name: slug, type: 'website', status: 'deployed', url: pagesUrl || githubUrl });
           mem.logActivity(`Website gebaut und gepusht: ${slug}`);
           await sendTelegram(
-            `✅ *Build fertig: ${taskText}*\n\n` +
-            `📦 GitHub: ${githubUrl}\n` +
-            `🌐 Live: ${pagesUrl || 'GitHub Pages wird aktiviert...'}\n\n` +
-            `_Pages ist in 1-2 Minuten erreichbar._`,
+            `✅ *${taskText}* Website ist live:\n${pagesUrl || githubUrl}\n\n_Pages kann 1–2 Min. brauchen._`,
             chatId
           );
         } else {
@@ -247,7 +249,7 @@ Liefere die Dateien in GENAU diesem Format:
       }
     } else {
       mem.saveProject({ name: slug, type: 'website', status: 'local', url: projectDir });
-      await sendTelegram(`📁 Projekt lokal gespeichert: \`${projectDir}\`\n\nFür GitHub: GITHUB_TOKEN und GITHUB_USER in .env setzen.`, chatId);
+      await sendTelegram(`✅ *${taskText}* Website gespeichert:\n\`${projectDir}\`\n\n_Für Live-URL: GITHUB\\_TOKEN in .env setzen._`, chatId);
     }
   } catch (err) {
     await sendTelegram(`❌ Build-Fehler: ${err.message}`, chatId);
@@ -563,8 +565,28 @@ Format:
   }
 }
 
+// ── Website-Intent Erkennung ──────────────────────────────────
+function detectWebsiteIntent(text) {
+  const triggers = [
+    /erstell[e]?\s+.*(website|webseite|landing\s*page|seite)/i,
+    /bau[e]?\s+.*(website|webseite|landing\s*page)/i,
+    /mach[e]?\s+.*(website|webseite|landing\s*page)/i,
+    /website\s+(für|fuer)\s+/i,
+    /webseite\s+(für|fuer)\s+/i,
+    /landing\s*page\s+(für|fuer)\s+/i,
+  ];
+  return triggers.some(r => r.test(text));
+}
+
 // ── Freitext ──────────────────────────────────────────────────
 async function handleFreetext(text, chatId) {
+  // Website-Intent abfangen — BEVOR Claude antwortet
+  if (detectWebsiteIntent(text)) {
+    mem.logActivity(`Website-Intent erkannt: ${text.slice(0, 60)}`);
+    await autoBuildWebsite(text, chatId);
+    return;
+  }
+
   try {
     const history = mem.getRecentConversations(6);
     mem.saveConversation('user', text);
@@ -573,6 +595,14 @@ async function handleFreetext(text, chatId) {
       claude(text, 1200, history),
       isTaskSuggestion(text),
     ]);
+
+    // Sicherheitsnetz: Falls Claude doch HTML ausgibt, blockieren
+    if (/<(!DOCTYPE|html|head|body|div|style)[^>]*>/i.test(reply)) {
+      console.warn('HTML in Claude reply blocked');
+      await sendTelegram('🏗️ Website wird gebaut...', chatId);
+      await autoBuildWebsite(text, chatId);
+      return;
+    }
 
     mem.saveConversation('alex', reply);
     mem.logActivity(`Chat: ${text.slice(0, 60)}`);

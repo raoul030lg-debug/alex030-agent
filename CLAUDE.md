@@ -66,6 +66,19 @@ Ziel: Kunde soll beim ersten Blick "WOW" sagen.
 Nach jeder Website-Erstellung automatisch ausführen:
 `open /Users/raoul/projects/[projektname]/index.html`
 
+## KRITISCHE REGEL — Website Output
+
+- **NIEMALS** HTML/CSS/JS Code als Text in Telegram senden
+- **IMMER** die Website als Datei unter `~/projects/[kundenname]/` speichern
+- **IMMER** zu GitHub Pages deployen nach dem Bauen (wenn Token gesetzt)
+- **NUR** die fertige URL zurückschicken
+- Format: `✅ [Kundenname] Website ist live: [URL]`
+
+Wenn in `index.js` eine Website gebaut wird:
+1. `autoBuildWebsite()` aufrufen — niemals HTML direkt in `sendTelegram()` einfügen
+2. `detectWebsiteIntent()` fängt Freitext-Anfragen ab, bevor Claude antworten kann
+3. Sicherheitsnetz in `handleFreetext()` blockiert HTML-Output falls Claude es trotzdem versucht
+
 ## Ehrliches Feedback
 
 - Sei mein Sparring-Partner
