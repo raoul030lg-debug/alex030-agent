@@ -133,7 +133,7 @@ ${skills.loadSkills()}`;
 // ── Claude API ────────────────────────────────────────────────
 async function claude(userMessage, maxTokens = 1200, history = []) {
   const response = await axios.post('https://api.anthropic.com/v1/messages', {
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     max_tokens: maxTokens,
     system: buildSystemPrompt(),
     messages: [...history, { role: 'user', content: userMessage }],
@@ -152,7 +152,7 @@ async function claude(userMessage, maxTokens = 1200, history = []) {
 async function detectIntent(text) {
   try {
     const response = await axios.post('https://api.anthropic.com/v1/messages', {
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 400,
       system: 'You are an intent classifier. Always respond with valid JSON only. No explanation, no markdown.',
       messages: [{
