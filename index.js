@@ -3,6 +3,7 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const { exec } = require('child_process');
 
 const mem    = require('./memory');
 const skills = require('./skills');
@@ -216,59 +217,55 @@ async function autoBuildWebsite(context, chatId) {
   const slug = slugBase || rawText.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
   const displayName = [kundenname, branche, stadt].filter(Boolean).join(' · ') || rawText;
 
-  await sendTelegram(`🏗️ Baue *${displayName}*...`, chatId);
+  // Sofort antworten — nicht warten
+  await sendTelegram(`⏳ Baue *${displayName}*...\nDauert 2–3 Minuten, ich melde mich wenn fertig.`, chatId);
 
   // Prompt zusammenbauen
   const promptLines = [
-    branche    ? `Branche: ${branche}`          : null,
-    kundenname ? `Kundenname: ${kundenname}`     : null,
-    telefon    ? `Telefon: ${telefon}`           : null,
+    branche    ? `Branche: ${branche}`      : null,
+    kundenname ? `Kundenname: ${kundenname}` : null,
+    telefon    ? `Telefon: ${telefon}`       : null,
     `Stadt: ${stadt || 'Berlin'}`,
     '',
     `Baue Premium Website. Speichere unter ~/projects/${slug}/`,
     'Deploye zu Vercel. Gib am Ende NUR die fertige URL zurück, sonst nichts.',
   ].filter(l => l !== null).join('\n');
 
-  // Prompt + Output als Temp-Dateien (vermeidet Shell-Escaping + Output-Truncation)
-  const ts          = Date.now();
-  const promptFile  = `/tmp/alex-prompt-${ts}.txt`;
-  const outputFile  = `/tmp/alex-output-${ts}.txt`;
+  const ts         = Date.now();
+  const promptFile = `/tmp/alex-prompt-${ts}.txt`;
+  const outputFile = `/tmp/alex-output-${ts}.txt`;
   tools.writeFile(promptFile, promptLines);
 
-  try {
-    // claude --print liest Prompt aus Datei, schreibt Output in Datei
-    // 5-Minuten-Timeout für den vollen Build
-    await tools.runCommand(
-      `claude --print "$(cat '${promptFile}')" > '${outputFile}' 2>&1`,
-      __dirname,
-      300000
-    );
+  const cmd = `claude --print "$(cat '${promptFile}')" > '${outputFile}' 2>&1`;
 
+  // Hintergrund-Prozess starten — exec callback feuert wenn fertig, kein await
+  exec(cmd, { cwd: __dirname, timeout: 300000 }, async (err) => {
     const fullOutput = tools.readFile(outputFile) || '';
-
-    // URL aus Output extrahieren (letzte https-URL im Text)
     const urlMatches = fullOutput.match(/https?:\/\/[^\s\n"'<>]+/g);
     const url = urlMatches ? urlMatches[urlMatches.length - 1].replace(/[.,;)]+$/, '') : null;
 
-    mem.saveProject({ name: slug, type: 'website', status: url ? 'deployed' : 'local', url: url || slug });
+    // Temp-Dateien aufräumen
+    try { fs.unlinkSync(promptFile); } catch {}
+    try { fs.unlinkSync(outputFile); } catch {}
+
     mem.logActivity(`Website gebaut: ${slug}`);
+    mem.saveProject({ name: slug, type: 'website', status: url ? 'deployed' : 'local', url: url || slug });
+
+    if (err && !url) {
+      await sendTelegram(`❌ Build fehlgeschlagen für *${displayName}*:\n${err.message.slice(0, 200)}`, chatId);
+      return;
+    }
 
     if (url) {
       await sendTelegram(`✅ *${displayName}* Website ist live:\n${url}`, chatId);
     } else {
-      // Kein Vercel-Token oder Deploy fehlgeschlagen — lokalen Pfad zurückgeben
       await sendTelegram(
-        `✅ *${displayName}* Website gespeichert:\n\`~/projects/${slug}/\`\n\n_Kein Vercel-Deploy — VERCEL\\_TOKEN fehlt._`,
+        `✅ *${displayName}* Website fertig:\n\`~/projects/${slug}/\`\n\n_Kein Vercel-URL — VERCEL\\_TOKEN fehlt?_`,
         chatId
       );
     }
-  } catch (err) {
-    await sendTelegram(`❌ Build-Fehler: ${err.message}`, chatId);
-  } finally {
-    // Temp-Dateien aufräumen
-    try { fs.unlinkSync(promptFile); } catch {}
-    try { fs.unlinkSync(outputFile); } catch {}
-  }
+  });
+  // Funktion kehrt hier sofort zurück — Telegram-Polling bleibt responsiv
 }
 
 async function autoGenerateContent(taskText, chatId) {
