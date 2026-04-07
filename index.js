@@ -9,6 +9,10 @@ const mem    = require('./memory');
 const skills = require('./skills');
 const tools  = require('./tools');
 
+// Claude Code Binary — voller Pfad für zuverlässige Ausführung in PM2/exec
+const CLAUDE_BIN = ['/usr/local/bin/claude', '/usr/bin/claude']
+  .find(p => fs.existsSync(p)) || 'claude';
+
 const app = express();
 app.use(express.json());
 
@@ -236,7 +240,9 @@ async function autoBuildWebsite(context, chatId) {
   const outputFile = `/tmp/alex-output-${ts}.txt`;
   tools.writeFile(promptFile, promptLines);
 
-  const cmd = `claude --print "$(cat '${promptFile}')" > '${outputFile}' 2>&1`;
+  // -p = non-interactive print mode
+  // --dangerously-skip-permissions = keine Rückfragen beim Schreiben/Ausführen
+  const cmd = `'${CLAUDE_BIN}' -p "$(cat '${promptFile}')" --dangerously-skip-permissions > '${outputFile}' 2>&1`;
 
   // Hintergrund-Prozess starten — exec callback feuert wenn fertig, kein await
   exec(cmd, { cwd: __dirname, timeout: 300000 }, async (err) => {
