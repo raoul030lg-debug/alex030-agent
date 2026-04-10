@@ -114,21 +114,324 @@ async function sendTelegram(message, chatId) {
   }
 }
 
+// ── Brain Vault ───────────────────────────────────────────────
+const VAULT_DIR = path.join(process.env.HOME, '030-Digital-Brain');
+const VAULT_LOG = path.join(VAULT_DIR, 'log.md');
+const VAULT_INDEX = path.join(VAULT_DIR, 'index.md');
+
+function loadVault() {
+  const files = ['CLAUDE.md', 'memory.md', 'knowledge-base.md'];
+  return files.map(f => {
+    const p = path.join(VAULT_DIR, f);
+    try {
+      if (!fs.existsSync(p)) return '';
+      return `\n\n--- ${f} ---\n${fs.readFileSync(p, 'utf8')}`;
+    } catch { return ''; }
+  }).join('');
+}
+
+// Wiki-Log: append-only
+function wikiLog(typ, beschreibung) {
+  try {
+    const datum = new Date().toISOString().slice(0, 10);
+    const eintrag = `\n## [${datum}] ${typ} | ${beschreibung}\n`;
+    fs.appendFileSync(VAULT_LOG, eintrag);
+  } catch (e) { console.error('wikiLog error:', e.message); }
+}
+
+// Wiki-Index neu generieren
+function rebuildIndex() {
+  try {
+    const datum = new Date().toISOString().slice(0, 10);
+    const wissenDir = path.join(VAULT_DIR, 'wissen');
+    const kundenAktivDir = path.join(VAULT_DIR, 'kunden/aktiv');
+    const leadsDir = path.join(VAULT_DIR, 'kunden/leads');
+
+    const wissenFiles = fs.existsSync(wissenDir)
+      ? fs.readdirSync(wissenDir).filter(f => f.endsWith('.md'))
+      : [];
+    const kundenFiles = fs.existsSync(kundenAktivDir)
+      ? fs.readdirSync(kundenAktivDir).filter(f => f.endsWith('.md'))
+      : [];
+    const leadFiles = fs.existsSync(leadsDir)
+      ? fs.readdirSync(leadsDir).filter(f => f.endsWith('.md'))
+      : [];
+
+    const wissenTable = wissenFiles.map(f => {
+      const name = f.replace('.md', '');
+      return `| [wissen/${f}](wissen/${f}) | ${name.charAt(0).toUpperCase() + name.slice(1)} |`;
+    }).join('\n');
+
+    const kundenTable = kundenFiles.map(f => {
+      try {
+        const content = fs.readFileSync(path.join(kundenAktivDir, f), 'utf8');
+        const branche = (content.match(/\*\*Branche:\*\* (.+)/) || [])[1] || '—';
+        return `| [kunden/aktiv/${f}](kunden/aktiv/${f}) | ${branche} | aktiv |`;
+      } catch { return `| kunden/aktiv/${f} | — | aktiv |`; }
+    }).join('\n');
+
+    const leadTable = leadFiles.map(f =>
+      `| [kunden/leads/${f}](kunden/leads/${f}) | Lead |`
+    ).join('\n');
+
+    const content = `# 030 Digital Brain — Index\n\nAutomatisch gepflegt von Alex. Letzte Aktualisierung: ${datum}.\n\n---\n\n## Kern-Dokumente\n\n| Datei | Beschreibung |\n|---|---|\n| [CLAUDE.md](CLAUDE.md) | Raoul, Preise, Ziele, Arbeitsweise |\n| [memory.md](memory.md) | Laufende Notizen, Entscheidungen |\n| [knowledge-base.md](knowledge-base.md) | Erprobtes Wissen |\n| [log.md](log.md) | Änderungslog |\n\n---\n\n## Wissen\n\n| Datei | Beschreibung |\n|---|---|\n${wissenTable}\n\n---\n\n## Aktive Kunden (${kundenFiles.length})\n\n| Datei | Branche | Status |\n|---|---|---|\n${kundenTable || '_keine_'}\n\n---\n\n## Leads (${leadFiles.length})\n\n| Datei | Typ |\n|---|---|\n${leadTable || '_keine_'}\n\n---\n\n## Skills\n\n\`skills/\` — 1.800+ Skills aus Clowdex, on-demand nach Kategorie.\n`;
+
+    fs.writeFileSync(VAULT_INDEX, content);
+    wikiLog('index', `Index neu generiert — ${wissenFiles.length} Wissen, ${kundenFiles.length} Kunden, ${leadFiles.length} Leads`);
+  } catch (e) { console.error('rebuildIndex error:', e.message); }
+}
+
+// Wiki-Seite erstellen oder updaten
+async function wikiUpsert(thema, inhalt, unterordner = 'wissen') {
+  try {
+    const slug = thema.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-').replace(/[äöüß]/g, c =>
+      ({ ä:'ae', ö:'oe', ü:'ue', ß:'ss' })[c] || c);
+    const dir = path.join(VAULT_DIR, unterordner);
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `${slug}.md`);
+    const isNew = !fs.existsSync(filePath);
+    if (isNew) {
+      fs.writeFileSync(filePath, `# ${thema}\n\n${inhalt}`);
+      wikiLog('create', `${unterordner}/${slug}.md — neu erstellt`);
+    } else {
+      const existing = fs.readFileSync(filePath, 'utf8');
+      fs.writeFileSync(filePath, existing + `\n\n---\n_Update ${new Date().toISOString().slice(0,10)}_\n\n${inhalt}`);
+      wikiLog('update', `${unterordner}/${slug}.md — ergänzt`);
+    }
+    rebuildIndex();
+    return filePath;
+  } catch (e) { console.error('wikiUpsert error:', e.message); return null; }
+}
+
+// Wiki-Lint: auf Widersprüche und fehlende Felder prüfen
+async function wikiLint() {
+  const issues = [];
+  try {
+    // Kunden ohne Pflichtfelder
+    const aktivDir = path.join(VAULT_DIR, 'kunden/aktiv');
+    if (fs.existsSync(aktivDir)) {
+      for (const f of fs.readdirSync(aktivDir).filter(f => f.endsWith('.md'))) {
+        const content = fs.readFileSync(path.join(aktivDir, f), 'utf8');
+        if (!content.includes('**Branche:**')) issues.push(`⚠️ ${f}: Branche fehlt`);
+        if (!content.includes('**Telefon:**')) issues.push(`⚠️ ${f}: Telefon fehlt`);
+        if (!content.includes('**Stadt:**'))   issues.push(`⚠️ ${f}: Stadt fehlt`);
+      }
+    }
+    // Doppelte Einträge erkennen
+    const allDirs = ['kunden/aktiv', 'kunden/leads', 'kunden/abgeschlossen'];
+    const allNames = [];
+    for (const d of allDirs) {
+      const dir = path.join(VAULT_DIR, d);
+      if (fs.existsSync(dir)) {
+        for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.md'))) {
+          if (allNames.includes(f)) issues.push(`⚠️ Doppelter Eintrag: ${f}`);
+          else allNames.push(f);
+        }
+      }
+    }
+    wikiLog('lint', `Lint-Check — ${issues.length} Issues gefunden`);
+    return issues;
+  } catch (e) { return [`❌ Lint-Fehler: ${e.message}`]; }
+}
+
+// ── Kunden-Memory ─────────────────────────────────────────────
+const KUNDEN_DIR = path.join(process.env.HOME, '030-Digital-Brain/kunden/aktiv');
+
+function saveKundeVault(felder) {
+  const { kundenname, branche, telefon, stadt } = felder;
+  if (!kundenname) return;
+  try {
+    fs.mkdirSync(KUNDEN_DIR, { recursive: true });
+    const slug = kundenname.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const filePath = path.join(KUNDEN_DIR, `${slug}.md`);
+    const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+    // Nicht überschreiben wenn schon mehr Infos drin
+    const lines = [
+      `# ${kundenname}`,
+      `**Datum:** ${new Date().toLocaleDateString('de-DE')}`,
+      branche  ? `**Branche:** ${branche}`   : null,
+      telefon  ? `**Telefon:** ${telefon}`   : null,
+      stadt    ? `**Stadt:** ${stadt}`       : null,
+      '',
+      '## Projekte',
+      '- [ ] Website in Arbeit',
+    ].filter(l => l !== null).join('\n');
+    if (!existing) {
+      fs.writeFileSync(filePath, lines);
+      wikiLog('create', `kunden/aktiv/${slug}.md — Neuer Kunde: ${kundenname}`);
+      rebuildIndex();
+    } else {
+      let updated = existing;
+      if (branche  && !existing.includes('**Branche:**'))  updated += `\n**Branche:** ${branche}`;
+      if (telefon  && !existing.includes('**Telefon:**'))  updated += `\n**Telefon:** ${telefon}`;
+      if (stadt    && !existing.includes('**Stadt:**'))    updated += `\n**Stadt:** ${stadt}`;
+      if (updated !== existing) {
+        fs.writeFileSync(filePath, updated);
+        wikiLog('update', `kunden/aktiv/${slug}.md — Felder ergänzt`);
+      }
+    }
+  } catch (e) { console.error('saveKundeVault error:', e.message); }
+}
+
+function loadKundeVault(kundenname) {
+  if (!kundenname) return '';
+  try {
+    const slug = kundenname.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const filePath = path.join(KUNDEN_DIR, `${slug}.md`);
+    return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+  } catch { return ''; }
+}
+
 // ── System Prompt ─────────────────────────────────────────────
 function buildSystemPrompt() {
-  return `Du bist Alex, Leons persönlicher KI-Agent. Du hilfst Leon bei allen Projekten und Aufgaben.
-Deine Fähigkeiten: Websites bauen, Code schreiben, Recherche, Texte schreiben, Ideen umsetzen, Probleme lösen.
-Du sprichst Deutsch, bist direkt und effizient wie ein Kumpel.
-Wenn dir Infos fehlen, frag nach.
-Kategorisiere jede Aufgabe: website, code, content, research, design, other.
+  const vault = loadVault();
+  const designSystem = (() => {
+    try {
+      const p = path.join(process.env.HOME, '030-Digital-Brain/wissen/design-system.md');
+      return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+    } catch { return ''; }
+  })();
+
+  return `Du bist Alex, der KI-Agent von 030 Digital Berlin.
+Du arbeitest für Raoul Hübenbecker und hilfst ihm bei Kundengesprächen, Website-Builds und dem Tagesgeschäft.
+
+PERSÖNLICHKEIT:
+- Professionell aber menschlich — wie ein kompetenter junger Berliner Dienstleister.
+- Duzen ist okay. Kurze, klare Sätze. Max 3-4 Sätze pro Antwort.
+- Selbstbewusst und kompetent. Direkt antworten, nicht ausweichen.
+- Max 1 Emoji pro Nachricht, nur wenn passend.
+- Kein Slang. Kein Roboter-Sprech.
+- NIE: "Ich werde nun", "Selbstverständlich", "Sehr geehrter", "Gerne", "Natürlich", "Zusammenfassend", "Wie kann ich helfen?"
+- Gut: "Hey! Klar, ich baue dir die Website. Dauert ca. 3 Minuten. 👍"
+- Schlecht: "Ey Bruder krass 🔥🔥🔥" / "Sehr geehrter Kunde, ich werde Ihre Anfrage bearbeiten."
+
+PREISE (auswendig kennen):
+- Website: ab 499 €
+- Logo: ab 149 €
+- Google Business Setup: 99 €
+- Social Media Paket: 199 €/Monat
+- Starter-Paket (Website+Logo+Google): 799 €
+- Komplett (Starter+Social+Updates): 249 €/Monat
+- Wartung & Hosting: 29 €/Monat
+- Zahlung: Überweisung oder PayPal/Stripe
+- 10% Rabatt bei Empfehlung
+
+EINWÄNDE BEHANDELN:
+- "zu teuer" → Klassische Agentur kostet 3.000–8.000€. Wir liefern in 24h für 499€.
+- "brauche ich nicht" → Ohne Website findest dich kein Neukunde bei Google.
+- "muss ich überlegen" → Kein Problem, ich melde mich in 2 Tagen nochmal.
 
 KRITISCHE REGEL — NIEMALS BRECHEN:
-- Sende NIEMALS HTML, CSS oder JavaScript-Code als Text in dieser Konversation
-- Wenn jemand eine Website will: Antworte NUR mit "🏗️ Baue Website..." — der Build startet automatisch
-- Websites werden immer als Datei gespeichert und deployed, niemals als Text ausgegeben
-- Output-Format nach Build: "✅ [Name] Website ist live: [URL]"
-${skills.loadSkills()}`;
+- Sende NIEMALS rohen HTML/CSS/JS-Code als Telegram-Nachricht an den Nutzer
+- Diese Regel betrifft NUR Telegram-Antworten — NICHT den internen Build-Prozess
+- Website-Anfrage erkennen → sofort kurz bestätigen: "Baue gerade deine Website, dauert 2-3 Minuten 👍"
+- Das Website-Dateisystem und den Build übernimmt ein separates System automatisch — du musst nichts weiter tun
+- WICHTIG: Diese Regel bedeutet NICHT, dass du Websites ablehnst. Du baust sie, du sagst nur keinen Code in den Chat
+${skills.loadSkills()}
+
+=== DESIGN SYSTEM ===
+${designSystem.slice(0, 2000)}
+=== ENDE DESIGN SYSTEM ===
+
+=== 030 DIGITAL BRAIN VAULT ===
+${vault}
+=== ENDE BRAIN VAULT ===`;
 }
+
+// ── Kimi API (Moonshot — Anthropic-compatible) ────────────────
+const KIMI_API_KEY  = process.env.KIMI_API_KEY;
+const KIMI_BASE_URL = process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/anthropic';
+const KIMI_MODEL    = process.env.KIMI_MODEL    || 'kimi-k2.5';
+
+// Vault-Kern einmalig beim Start laden und cachen
+let _vaultCache = null;
+function getVaultCore() {
+  if (_vaultCache) return _vaultCache;
+  try {
+    const claudeMd = fs.existsSync(path.join(VAULT_DIR, 'CLAUDE.md'))
+      ? fs.readFileSync(path.join(VAULT_DIR, 'CLAUDE.md'), 'utf8') : '';
+    const memoryMd = fs.existsSync(path.join(VAULT_DIR, 'memory.md'))
+      ? fs.readFileSync(path.join(VAULT_DIR, 'memory.md'), 'utf8') : '';
+    _vaultCache = `${claudeMd.slice(0, 2000)}\n\n${memoryMd.slice(0, 800)}`;
+    return _vaultCache;
+  } catch { return ''; }
+}
+
+// Basis-Kontext für Kimi
+function buildKimiPrompt() {
+  const vaultCore = getVaultCore();
+  return `Du bist Alex, der KI-Agent von 030 Digital Berlin.
+
+IDENTITÄT:
+- Inhaber: Raoul Hübenbecker
+- Agentur: 030 Digital — Websites für Berliner Handwerker
+- Slogan: "Deine Website in 24 Stunden"
+
+TON:
+- Professionell aber menschlich — Berliner Dienstleister-Stil
+- Duzen ist okay
+- Kurze, klare Sätze. Max 3-4 pro Antwort.
+- Immer Deutsch
+- Max 1 Emoji pro Nachricht
+- Kein Slang, kein Roboter-Sprech
+- NIE: "Ich werde nun", "Selbstverständlich", "Gerne", "Sehr geehrter"
+
+PREISE:
+- Website: 499 €
+- Logo: 149 €
+- Branding-Paket: 349 €
+- Google Business: 99 €
+- Social Media: 199 €/Monat
+- Zahlung: Überweisung + PayPal/Stripe
+- 10% Rabatt bei Empfehlung
+
+EINWÄNDE:
+- "zu teuer" → Klassische Agentur: 3.000–8.000 €. Wir: 499 € in 24h.
+- "brauche ich nicht" → Ohne Website findet dich kein Neukunde bei Google.
+- "muss ich überlegen" → Kein Problem, ich melde mich in 2 Tagen.
+
+KRITISCH: Sende NIEMALS HTML, CSS oder JavaScript-Code als Text.
+
+=== BRAIN VAULT ===
+${vaultCore}
+=== ENDE ===`;
+}
+
+async function kimi(userMessage, history = []) {
+  const response = await axios.post(`${KIMI_BASE_URL}/v1/messages`, {
+    model: KIMI_MODEL,
+    max_tokens: 600,
+    system: buildKimiPrompt(),
+    messages: [...history, { role: 'user', content: userMessage }],
+  }, {
+    headers: {
+      'x-api-key': KIMI_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    timeout: 30000,
+  });
+  return response.data.content[0].text;
+}
+
+// Routing: Kimi für einfache Anfragen, Claude für komplexe
+const KIMI_INTENTS = new Set([
+  'chat', 'preis_anfrage', 'logo_anfrage', 'google_anfrage',
+  'social_anfrage', 'termin_anfrage', 'empfehlung_anfrage', 'rechnung_anfrage',
+]);
+const CLAUDE_INTENTS = new Set([
+  'website_erstellen', 'video_script', 'task_speichern', 'idee_speichern',
+]);
+
+function routeModel(intent) {
+  if (CLAUDE_INTENTS.has(intent)) return 'claude';
+  if (KIMI_INTENTS.has(intent))   return 'kimi';
+  // Fallback: kurze Nachrichten → Kimi, lange → Claude
+  return 'kimi';
+}
+
+// ── Modell-State ──────────────────────────────────────────────
+let activeModel = 'claude'; // Standard: Claude
 
 // ── Claude API ────────────────────────────────────────────────
 async function claude(userMessage, maxTokens = 1200, history = []) {
@@ -160,7 +463,14 @@ async function detectIntent(text) {
         content: `Classify this message and extract all available fields.
 
 Intents:
-- website_erstellen: user wants a website/landing page built for a business
+- website_erstellen: user wants a website/landing page/homepage built for a business
+- preis_anfrage: user asks about prices, costs, offers (was kostet, preis, angebot, wie viel)
+- logo_anfrage: user asks about logo design service
+- google_anfrage: user asks about Google Business setup
+- social_anfrage: user asks about social media package
+- termin_anfrage: user wants to schedule an appointment or callback
+- empfehlung_anfrage: user mentions referral or recommendation (Empfehlung, empfohlen, Rabatt)
+- rechnung_anfrage: user asks about payment, invoice, how to pay
 - video_script: user wants a TikTok/video script
 - task_speichern: user explicitly wants to save a task or todo item
 - idee_speichern: user wants to save an idea
@@ -172,7 +482,7 @@ Message: "${text}"
 
 Respond with this exact JSON structure:
 {
-  "intent": "website_erstellen|video_script|task_speichern|idee_speichern|chat",
+  "intent": "website_erstellen|preis_anfrage|logo_anfrage|google_anfrage|social_anfrage|termin_anfrage|empfehlung_anfrage|rechnung_anfrage|video_script|task_speichern|idee_speichern|chat",
   "felder": {
     "kundenname": null,
     "branche": null,
@@ -210,68 +520,172 @@ function loadBrancheSkill(branche) {
   catch { return ''; }
 }
 
-// ── Autonomes Bauen via Claude Code Subagent ─────────────────
+// ── Website bauen via direkter API ───────────────────────────
 // context: { kundenname, branche, telefon, stadt, rawText }
 async function autoBuildWebsite(context, chatId) {
   const { kundenname, branche, telefon, stadt, rawText } = context;
 
-  const slugBase = [branche, kundenname, stadt]
+  const slugBase = [kundenname, branche, stadt]
     .filter(Boolean).join(' ')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50);
   const slug = slugBase || rawText.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
   const displayName = [kundenname, branche, stadt].filter(Boolean).join(' · ') || rawText;
+  const projektDir  = path.join(tools.PROJECTS_DIR, slug);
 
-  // Sofort antworten — nicht warten
-  await sendTelegram(`⏳ Baue *${displayName}*...\nDauert 2–3 Minuten, ich melde mich wenn fertig.`, chatId);
+  await sendTelegram(`⏳ Baue *${displayName}*...\nDauert ca. 1 Minute.`, chatId);
 
-  // Prompt zusammenbauen
-  const promptLines = [
-    branche    ? `Branche: ${branche}`      : null,
-    kundenname ? `Kundenname: ${kundenname}` : null,
-    telefon    ? `Telefon: ${telefon}`       : null,
-    `Stadt: ${stadt || 'Berlin'}`,
-    '',
-    `Baue Premium Website. Speichere unter ~/projects/${slug}/`,
-    'Deploye zu Vercel. Gib am Ende NUR die fertige URL zurück, sonst nichts.',
-  ].filter(l => l !== null).join('\n');
+  // Branchenwissen laden
+  const brancheSkill    = loadBrancheSkill(branche);
+  const brancheWissen   = (() => {
+    if (!branche) return '';
+    const p = path.join(process.env.HOME, `030-Digital-Brain/wissen/${branche}.md`);
+    try { return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : ''; } catch { return ''; }
+  })();
+  const designSystem    = (() => {
+    const p = path.join(process.env.HOME, '030-Digital-Brain/wissen/design-system.md');
+    try { return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').slice(0, 2000) : ''; } catch { return ''; }
+  })();
 
-  const ts         = Date.now();
-  const promptFile = `/tmp/alex-prompt-${ts}.txt`;
-  const outputFile = `/tmp/alex-output-${ts}.txt`;
-  tools.writeFile(promptFile, promptLines);
+  // Branchen-Farben
+  const branchenFarben = {
+    klempner:   { primär: '#1E40AF', akzent: '#F97316', schrift: 'Inter, Roboto' },
+    elektriker: { primär: '#1F2937', akzent: '#F59E0B', schrift: 'Inter, DM Sans' },
+    maler:      { primär: '#FFFFFF', akzent: '#EA580C', schrift: 'Montserrat, Open Sans' },
+    barbershop: { primär: '#0A0A0A', akzent: '#D4AF37', schrift: 'Playfair Display, Inter' },
+    kosmetik:   { primär: '#FAF7F2', akzent: '#D4AF37', schrift: 'Cormorant Garamond, Lato' },
+    restaurant: { primär: '#1A0F0A', akzent: '#C17A4A', schrift: 'Cormorant Garamond, Lato' },
+  };
+  const farben = branchenFarben[branche] || { primär: '#0A0A0A', akzent: '#2563EB', schrift: 'Inter, sans-serif' };
 
-  // -p = non-interactive print mode
-  // --dangerously-skip-permissions = keine Rückfragen beim Schreiben/Ausführen
-  const cmd = `'${CLAUDE_BIN}' -p "$(cat '${promptFile}')" --dangerously-skip-permissions > '${outputFile}' 2>&1`;
+  const buildPrompt = `Du bist ein Senior UI/UX Engineer mit 10+ Jahren Erfahrung. Baue eine vollständige, professionelle Website.
 
-  // Hintergrund-Prozess starten — exec callback feuert wenn fertig, kein await
-  exec(cmd, { cwd: __dirname, timeout: 300000 }, async (err) => {
-    const fullOutput = tools.readFile(outputFile) || '';
-    const urlMatches = fullOutput.match(/https?:\/\/[^\s\n"'<>]+/g);
-    const url = urlMatches ? urlMatches[urlMatches.length - 1].replace(/[.,;)]+$/, '') : null;
+AUFTRAG:
+- Kundenname: ${kundenname || 'Unbekannt'}
+- Branche: ${branche || 'Allgemein'}
+- Telefon: ${telefon || 'auf Anfrage'}
+- Stadt: ${stadt || 'Berlin'}
 
-    // Temp-Dateien aufräumen
-    try { fs.unlinkSync(promptFile); } catch {}
-    try { fs.unlinkSync(outputFile); } catch {}
+DESIGN-VORGABEN:
+- Primärfarbe: ${farben.primär}
+- Akzentfarbe: ${farben.akzent}
+- Schriften: ${farben.schrift} (Google Fonts)
+- Dark Background: #0A0A0A als Basis
+- Glassmorphism Cards: backdrop-filter blur(20px), border rgba(255,255,255,0.08)
+- GSAP von cdnjs für alle Animationen
+- Custom Cursor (Dot + Follower) auf Desktop
+- Sticky WhatsApp Button pulsierend unten rechts
+- Mobile-First, vollständig responsive
 
-    mem.logActivity(`Website gebaut: ${slug}`);
-    mem.saveProject({ name: slug, type: 'website', status: url ? 'deployed' : 'local', url: url || slug });
+PFLICHT-SECTIONS:
+1. Hero — große Headline, CTAs, Trust-Badges (Jahre, Bewertungen)
+2. Leistungen — 3-4 Cards mit 3D Tilt-Effekt
+3. Warum wir — 3 USPs mit Icons
+4. Referenzen / Galerie — 3 Beispiel-Projekte
+5. Google Bewertungen — 3 Fake-Bewertungen (4-5 Sterne)
+6. Kontakt — Telefon, WhatsApp, Adresse
+7. Footer — Impressum, Datenschutz, Copyright
 
-    if (err && !url) {
-      await sendTelegram(`❌ Build fehlgeschlagen für *${displayName}*:\n${err.message.slice(0, 200)}`, chatId);
-      return;
+PFLICHT-ELEMENTE:
+- WhatsApp CTA: https://wa.me/49${(telefon || '30123456').replace(/[^0-9]/g, '')}
+- tel: Link für Telefonnummer
+- Schema.org LocalBusiness JSON-LD
+- Meta Description optimiert
+- Open Graph Tags
+
+GSAP ANIMATIONEN:
+- Hero Entrance: staggered Badge→Headline→Sub→CTA→Trust
+- ScrollTrigger auf allen Sektionen
+- 3D Card Tilt: rotationY ±8°, transformPerspective 800
+- Parallax Hero Background
+
+VERBOTEN:
+- Stock-Fotos — nur CSS-Gradients als Platzhalter
+- Mehr als 3 Farben
+- Lorem Ipsum — echter branchenspezifischer Inhalt
+- Weißer Hintergrund
+
+${brancheWissen ? `BRANCHEN-SPEZIFISCH:\n${brancheWissen.slice(0, 1000)}` : ''}
+${brancheSkill  ? `SKILL-KONTEXT:\n${brancheSkill.slice(0, 800)}` : ''}
+${designSystem  ? `DESIGN SYSTEM:\n${designSystem.slice(0, 1000)}` : ''}
+
+Antworte NUR mit dem kompletten HTML Code. Kein Text davor oder danach. Kein Markdown. Keine Erklärungen.
+Beginne direkt mit <!DOCTYPE html> und ende mit </html>.
+CSS und JavaScript inline einbetten (<style> im <head>, <script> vor </body>).`;
+
+  // Direkt API-Call — kein Subprocess
+  (async () => {
+    try {
+      const response = await axios.post('https://api.anthropic.com/v1/messages', {
+        model: 'claude-sonnet-4-6',
+        max_tokens: 16000,
+        messages: [{ role: 'user', content: buildPrompt }],
+      }, {
+        headers: {
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        timeout: 180000,
+      });
+
+      const output = response.data.content[0].text.trim();
+      console.log(`BUILD output preview (${output.length} chars): ${output.slice(0, 120)}`);
+
+      // HTML extrahieren — direkt oder aus Code-Block
+      let html = null;
+      if (output.startsWith('<!DOCTYPE') || output.startsWith('<html')) {
+        html = output;
+      } else {
+        const htmlMatch = output.match(/```html\n?([\s\S]*?)```/) ||
+                          output.match(/(<!DOCTYPE[\s\S]*?<\/html>)/i);
+        if (htmlMatch) html = htmlMatch[1].trim();
+      }
+
+      if (!html) {
+        const preview = output.slice(0, 300).replace(/\n/g, ' ');
+        await sendTelegram(`❌ Build fehlgeschlagen — kein HTML in Response.\n\nAPI antwortete:\n\`${preview}\``, chatId);
+        return;
+      }
+
+      // Projekt-Verzeichnis anlegen und Datei speichern
+      fs.mkdirSync(projektDir, { recursive: true });
+      fs.writeFileSync(path.join(projektDir, 'index.html'), html);
+
+      mem.logActivity(`Website gebaut: ${slug}`);
+      mem.saveProject({ name: slug, type: 'website', status: 'local', url: slug });
+      wikiLog('create', `Website gebaut: ${slug} (${branche || 'allgemein'})`);
+
+      // Browser öffnen
+      exec(`open "${path.join(projektDir, 'index.html')}"`);
+
+      // Deploy zu GitHub Pages wenn Token gesetzt
+      let url = null;
+      if (GITHUB_TOKEN && GITHUB_TOKEN !== 'PLACEHOLDER' && GITHUB_USER && GITHUB_USER !== 'PLACEHOLDER') {
+        try {
+          const pushResult = await tools.pushToGithub(projektDir, slug, GITHUB_TOKEN, GITHUB_USER);
+          if (pushResult.success) {
+            url = await tools.enableGithubPages(slug, GITHUB_TOKEN, GITHUB_USER);
+          }
+        } catch (deployErr) {
+          console.error('Deploy error:', deployErr.message);
+        }
+      }
+
+      if (url) {
+        mem.saveProject({ name: slug, type: 'website', status: 'deployed', url });
+        await sendTelegram(`✅ *${displayName}* Website ist live:\n${url}`, chatId);
+      } else {
+        await sendTelegram(
+          `✅ *${displayName}* Website fertig!\n📁 \`~/projects/${slug}/\`\n\n_Deploy: GITHUB\\_TOKEN setzen für automatisches GitHub Pages Deployment._`,
+          chatId
+        );
+      }
+    } catch (err) {
+      console.error('autoBuildWebsite error:', err.message);
+      await sendTelegram(`❌ Build fehlgeschlagen: ${err.message.slice(0, 200)}`, chatId);
     }
-
-    if (url) {
-      await sendTelegram(`✅ *${displayName}* Website ist live:\n${url}`, chatId);
-    } else {
-      await sendTelegram(
-        `✅ *${displayName}* Website fertig:\n\`~/projects/${slug}/\`\n\n_Kein Vercel-URL — VERCEL\\_TOKEN fehlt?_`,
-        chatId
-      );
-    }
-  });
-  // Funktion kehrt hier sofort zurück — Telegram-Polling bleibt responsiv
+  })();
+  // Sofort zurückkehren — Telegram-Polling bleibt responsiv
 }
 
 async function autoGenerateContent(taskText, chatId) {
@@ -538,14 +952,175 @@ Format:
     return;
   }
 
+  // /wiki [thema]
+  const wikiMatch = text.match(/^\/wiki\s+(.+)$/i);
+  if (wikiMatch) {
+    const thema = wikiMatch[1].trim();
+    await sendTelegram(`📖 Erstelle Wiki-Seite: *${thema}*...`, chatId);
+    try {
+      const inhalt = await claude(
+        `Erstelle einen strukturierten Wiki-Eintrag auf Deutsch für: "${thema}"\n\nKontext: 030 Digital Berlin — Web-Agentur für Berliner Handwerker.\nFormat: Markdown mit ## Abschnitten. Konkret, praxisnah, max 400 Wörter.`,
+        800
+      );
+      const filePath = await wikiUpsert(thema, inhalt);
+      mem.logActivity(`Wiki: ${thema}`);
+      await sendTelegram(`✅ *Wiki: ${thema}*\n\n${inhalt.slice(0, 2000)}\n\n📁 \`${filePath}\``, chatId);
+    } catch (e) { await sendTelegram(`❌ Wiki-Fehler: ${e.message}`, chatId); }
+    return;
+  }
+
+  // /lint
+  if (/^\/lint$/i.test(text)) {
+    await sendTelegram('🔍 Prüfe Brain Vault...', chatId);
+    const issues = await wikiLint();
+    if (issues.length === 0) {
+      await sendTelegram('✅ *Lint sauber* — keine Issues gefunden.', chatId);
+    } else {
+      await sendTelegram(`⚠️ *Lint — ${issues.length} Issues:*\n\n${issues.join('\n')}`, chatId);
+    }
+    return;
+  }
+
+  // /index
+  if (/^\/index$/i.test(text)) {
+    rebuildIndex();
+    const indexContent = fs.existsSync(VAULT_INDEX) ? fs.readFileSync(VAULT_INDEX, 'utf8') : '';
+    await sendTelegram(`📚 *Index neu generiert*\n\n${indexContent.slice(0, 2500)}`, chatId);
+    return;
+  }
+
+  // /claude
+  if (/^\/claude$/i.test(text)) {
+    activeModel = 'claude';
+    await sendTelegram('✅ Wechsel zu Claude', chatId);
+    return;
+  }
+
+  // /kimi
+  if (/^\/kimi$/i.test(text)) {
+    if (!KIMI_API_KEY) { await sendTelegram('❌ KIMI_API_KEY nicht gesetzt.', chatId); return; }
+    activeModel = 'kimi';
+    await sendTelegram('✅ Wechsel zu Kimi K2.5', chatId);
+    return;
+  }
+
+  // /modell
+  if (/^\/modell$/i.test(text)) {
+    const label = activeModel === 'claude' ? 'Claude Sonnet 4.6' : 'Kimi K2.5';
+    await sendTelegram(`🤖 Aktives Modell: *${label}*`, chatId);
+    return;
+  }
+
+  // /kunden
+  if (/^\/kunden$/i.test(text)) {
+    const aktivDir = path.join(process.env.HOME, '030-Digital-Brain/kunden/aktiv');
+    try {
+      const files = fs.existsSync(aktivDir) ? fs.readdirSync(aktivDir).filter(f => f.endsWith('.md')) : [];
+      if (files.length === 0) { await sendTelegram('👥 Noch keine aktiven Kunden.', chatId); return; }
+      let msg = `👥 *Aktive Kunden (${files.length})*\n\n`;
+      for (const f of files) {
+        const content = fs.readFileSync(path.join(aktivDir, f), 'utf8');
+        const nameMatch = content.match(/^# (.+)/m);
+        const brancheMatch = content.match(/\*\*Branche:\*\* (.+)/);
+        const stadtMatch = content.match(/\*\*Stadt:\*\* (.+)/);
+        msg += `• *${nameMatch?.[1] || f}*`;
+        if (brancheMatch) msg += ` — ${brancheMatch[1]}`;
+        if (stadtMatch) msg += `, ${stadtMatch[1]}`;
+        msg += '\n';
+      }
+      await sendTelegram(msg, chatId);
+    } catch (e) { await sendTelegram(`❌ Fehler: ${e.message}`, chatId); }
+    return;
+  }
+
+  // /leads
+  if (/^\/leads$/i.test(text)) {
+    const leadsDir = path.join(process.env.HOME, '030-Digital-Brain/kunden/leads');
+    try {
+      const files = fs.existsSync(leadsDir) ? fs.readdirSync(leadsDir).filter(f => f.endsWith('.md')) : [];
+      if (files.length === 0) { await sendTelegram('📋 Keine Leads vorhanden. Mit /akquise neue finden.', chatId); return; }
+      let msg = `📋 *Leads (${files.length})*\n\n`;
+      for (const f of files) {
+        const content = fs.readFileSync(path.join(leadsDir, f), 'utf8');
+        const nameMatch = content.match(/^# (.+)/m);
+        const statusMatch = content.match(/\*\*Status:\*\* (.+)/);
+        msg += `• *${nameMatch?.[1] || f}* — ${statusMatch?.[1] || 'neu'}\n`;
+      }
+      await sendTelegram(msg, chatId);
+    } catch (e) { await sendTelegram(`❌ Fehler: ${e.message}`, chatId); }
+    return;
+  }
+
+  // /umsatz
+  if (/^\/umsatz$/i.test(text)) {
+    const aktivDir = path.join(process.env.HOME, '030-Digital-Brain/kunden/aktiv');
+    const abgeDir = path.join(process.env.HOME, '030-Digital-Brain/kunden/abgeschlossen');
+    try {
+      const aktiv = fs.existsSync(aktivDir) ? fs.readdirSync(aktivDir).filter(f => f.endsWith('.md')).length : 0;
+      const abge = fs.existsSync(abgeDir) ? fs.readdirSync(abgeDir).filter(f => f.endsWith('.md')).length : 0;
+      const projekte = mem.getProjects();
+      const deployed = projekte.filter(p => p.status === 'deployed').length;
+      await sendTelegram(
+        `💰 *030 Digital — Übersicht*\n\n👥 Aktive Kunden: ${aktiv}\n✅ Abgeschlossen: ${abge}\n🌐 Deployed: ${deployed}\n\n_Umsatz-Tracking: Rechnungen in ~/030-Digital-Brain/vorlagen/rechnungen/_`,
+        chatId
+      );
+    } catch (e) { await sendTelegram(`❌ Fehler: ${e.message}`, chatId); }
+    return;
+  }
+
+  // /akquise [Branche] [Bezirk]
+  const akquiseMatch = text.match(/^\/akquise\s+(.+)$/i);
+  if (akquiseMatch) {
+    const query = akquiseMatch[1].trim();
+    const parts = query.split(/\s+/);
+    const branche = parts[0];
+    const bezirk = parts.slice(1).join(' ') || 'Berlin';
+    await sendTelegram(`🔍 Suche ${branche}-Betriebe in ${bezirk}...`, chatId);
+    try {
+      const prompt = `Du bist ein Sales-Agent für 030 Digital Berlin.
+
+Generiere 5 personalisierte Kaltakquise-Nachrichten für ${branche}-Betriebe in ${bezirk}, die wahrscheinlich keine professionelle Website haben.
+
+Für jeden Lead:
+1. Firmenname (realistischer Berliner Name)
+2. Kurze personalisierte WhatsApp-Nachricht (max 3 Sätze, professionell, auf Deutsch)
+3. Warum die vermutlich keine Website haben
+
+Format pro Lead:
+**[Firmenname]**
+Nachricht: [WhatsApp Text]
+Grund: [kurze Begründung]`;
+
+      const result = await claude(prompt, 1200);
+      // Leads speichern
+      const leadsDir = path.join(process.env.HOME, '030-Digital-Brain/kunden/leads');
+      fs.mkdirSync(leadsDir, { recursive: true });
+      const ts = new Date().toLocaleDateString('de-DE');
+      fs.appendFileSync(
+        path.join(leadsDir, `akquise-${branche}-${bezirk.replace(/\s/g,'-')}.md`),
+        `# Akquise: ${branche} in ${bezirk}\n**Datum:** ${ts}\n\n${result}\n\n---\n`
+      );
+      mem.logActivity(`Akquise: ${branche} ${bezirk}`);
+      await sendTelegram(`📋 *Leads: ${branche} in ${bezirk}*\n\n${result.slice(0, 3500)}`, chatId);
+    } catch (e) { await sendTelegram(`❌ Fehler: ${e.message}`, chatId); }
+    return;
+  }
+
   // /status
   if (/^\/status$/i.test(text)) {
     const open = parseTasks().filter(t => !t.done).length;
-    const ideas = parseIdeas().length;
-    const clients = mem.getClients().length;
-    const projects = mem.getProjects().length;
+    const aktivDir = path.join(process.env.HOME, '030-Digital-Brain/kunden/aktiv');
+    const leadsDir = path.join(process.env.HOME, '030-Digital-Brain/kunden/leads');
+    const aktivCount = fs.existsSync(aktivDir) ? fs.readdirSync(aktivDir).filter(f => f.endsWith('.md')).length : 0;
+    const leadsCount = fs.existsSync(leadsDir) ? fs.readdirSync(leadsDir).filter(f => f.endsWith('.md')).length : 0;
+    const projects = mem.getProjects();
     await sendTelegram(
-      `✅ *Alex online*\n\n📋 Offene Tasks: ${open}\n💡 Ideen: ${ideas}\n👥 Kunden: ${clients}\n📦 Projekte: ${projects}\n⏱ Uptime: ${Math.floor(process.uptime() / 60)} Min`,
+      `✅ *030 Digital — Status*\n\n` +
+      `👥 Aktive Kunden: ${aktivCount}\n` +
+      `📋 Leads: ${leadsCount}\n` +
+      `🌐 Projekte deployed: ${projects.filter(p=>p.status==='deployed').length}\n` +
+      `📝 Offene Tasks: ${open}\n` +
+      `⏱ Uptime: ${Math.floor(process.uptime() / 60)} Min`,
       chatId
     );
     return;
@@ -566,9 +1141,16 @@ Format:
       '/file [Pfad] — Dateiinhalt anzeigen\n' +
       '/search [Query] — Recherche\n' +
       '/log — letzte Aktivitäten\n\n' +
-      '👥 *Kunden*\n' +
-      '/client [Name, Branche, Stadt] — Kunde anlegen\n' +
-      '/clients — Kundenliste\n\n' +
+      '👥 *Kunden & Sales*\n' +
+      '/kunden — alle aktiven Kunden\n' +
+      '/leads — alle Leads\n' +
+      '/umsatz — Übersicht Projekte & Kunden\n' +
+      '/akquise [Branche] [Bezirk] — Kaltakquise-Nachrichten generieren\n' +
+      '/client [Name, Branche, Stadt] — Kunde manuell anlegen\n\n' +
+      '📖 *Wiki*\n' +
+      '/wiki [Thema] — Wiki-Seite erstellen oder updaten\n' +
+      '/lint — Brain Vault auf Probleme prüfen\n' +
+      '/index — Index neu generieren\n\n' +
       '💡 *Ideen & Videos*\n' +
       '/idea [Idee] — Idee speichern\n' +
       '/ideas — alle Ideen\n' +
@@ -598,10 +1180,95 @@ async function handleFreetext(text, chatId) {
   const { intent, felder } = intentResult;
   console.log(`INTENT: ${intent}`, felder);
 
+  // Kunden-Infos sofort in Vault speichern wenn vorhanden
+  if (felder.kundenname) {
+    saveKundeVault(felder);
+    // Bekannte Kunden-Infos in felder mergen damit sie nicht zweimal gefragt werden
+    const existing = loadKundeVault(felder.kundenname);
+    if (existing) {
+      const telMatch = existing.match(/\*\*Telefon:\*\* (.+)/);
+      const brandMatch = existing.match(/\*\*Branche:\*\* (.+)/);
+      const stadtMatch = existing.match(/\*\*Stadt:\*\* (.+)/);
+      if (!felder.telefon && telMatch) felder.telefon = telMatch[1].trim();
+      if (!felder.branche && brandMatch) felder.branche = brandMatch[1].trim();
+      if (!felder.stadt && stadtMatch) felder.stadt = stadtMatch[1].trim();
+    }
+  }
+
   // ── website_erstellen ──────────────────────────────────────
   if (intent === 'website_erstellen') {
     mem.logActivity(`website_erstellen: ${felder.kundenname || text.slice(0, 40)}`);
     await autoBuildWebsite({ ...felder, rawText: text }, chatId);
+    return;
+  }
+
+  // ── preis_anfrage ──────────────────────────────────────────
+  if (intent === 'preis_anfrage') {
+    const msg = `Unsere Preise:\n\n` +
+      `🌐 *Website* — ab 499 €\n` +
+      `✏️ *Logo* — ab 149 €\n` +
+      `📍 *Google Business* — 99 €\n` +
+      `📱 *Social Media* — 199 €/Monat\n\n` +
+      `*Pakete:*\n` +
+      `⭐ Starter (Website+Logo+Google) — 799 €\n` +
+      `💎 Komplett (alles+Updates) — 249 €/Monat\n\n` +
+      `Zahlung per Überweisung oder PayPal. 10% Rabatt bei Empfehlung.\n` +
+      `Soll ich dir ein konkretes Angebot machen?`;
+    await sendTelegram(msg, chatId);
+    return;
+  }
+
+  // ── logo_anfrage ───────────────────────────────────────────
+  if (intent === 'logo_anfrage') {
+    await sendTelegram(
+      `Logo-Design ab *149 €*.\n\nDu bekommst: 3 Entwürfe, alle Formate (PNG, SVG, PDF), unbegrenzte Revisionen in der ersten Woche.\n\nMeistens fertig in 24h. Interesse?`,
+      chatId
+    );
+    return;
+  }
+
+  // ── google_anfrage ─────────────────────────────────────────
+  if (intent === 'google_anfrage') {
+    await sendTelegram(
+      `Google Business Setup für *99 €* — einmalig.\n\nIch richte deinen Eintrag komplett ein: Fotos, Beschreibung, Öffnungszeiten, Kategorien optimiert.\nErgebnis: Mehr Anrufe direkt aus der Google-Suche.\n\nLohnt sich besonders wenn du noch keinen Eintrag hast. Soll ich das machen?`,
+      chatId
+    );
+    return;
+  }
+
+  // ── social_anfrage ─────────────────────────────────────────
+  if (intent === 'social_anfrage') {
+    await sendTelegram(
+      `Social Media Paket für *199 €/Monat*.\n\nEnthalten: 12 Posts/Monat, Stories, einheitliches Branding, Texte auf Deutsch.\n\nDu lieferst kurz die Infos, wir machen den Rest. Monatlich kündbar.\n\nInteresse?`,
+      chatId
+    );
+    return;
+  }
+
+  // ── termin_anfrage ─────────────────────────────────────────
+  if (intent === 'termin_anfrage') {
+    await sendTelegram(
+      `Kein Problem! Schreib mir einfach wann es dir passt — ich melde mich dann direkt bei dir.\n\nOder gleich auf WhatsApp: Raoul ist Mo–Fr 9–19 Uhr und Sa 10–16 Uhr erreichbar.`,
+      chatId
+    );
+    return;
+  }
+
+  // ── empfehlung_anfrage ─────────────────────────────────────
+  if (intent === 'empfehlung_anfrage') {
+    await sendTelegram(
+      `Nice, danke für die Empfehlung! 🙏\n\nDu bekommst *10% Rabatt* auf deine nächste Bestellung — und die Person die du empfohlen hast auch.\n\nEinfach beim nächsten Auftrag Bescheid geben.`,
+      chatId
+    );
+    return;
+  }
+
+  // ── rechnung_anfrage ──────────────────────────────────────
+  if (intent === 'rechnung_anfrage') {
+    await sendTelegram(
+      `Zahlung läuft so:\n\n50% bei Auftragserteilung, 50% nach Fertigstellung.\n\nZahlung per *Überweisung* oder *PayPal*.\nRechnung bekommst du per E-Mail von hallo@030digital.de.\n\nBei Fragen einfach melden.`,
+      chatId
+    );
     return;
   }
 
@@ -651,24 +1318,38 @@ HASHTAGS: [5-8 Hashtags]`, 800);
     return;
   }
 
-  // ── chat (default) ─────────────────────────────────────────
+  // ── chat (default) — Kimi oder Claude je nach Intent ─────────
   try {
     const history = mem.getRecentConversations(6);
     mem.saveConversation('user', text);
 
-    const reply = await claude(text, 1200, history);
+    // Manuell gewähltes Modell hat Vorrang; sonst automatisches Routing
+    const model = activeModel !== 'auto' ? activeModel : routeModel(intent);
+    console.log(`MODEL: ${model} (intent: ${intent}, active: ${activeModel})`);
+
+    let reply;
+    if (model === 'kimi' && KIMI_API_KEY) {
+      try {
+        reply = await kimi(text, history);
+      } catch (kimiErr) {
+        console.warn('Kimi failed, fallback to Claude:', kimiErr.message);
+        reply = await claude(text, 1200, history);
+      }
+    } else {
+      reply = await claude(text, 1200, history);
+    }
 
     // Sicherheitsnetz: HTML-Output blockieren
     if (/<(!DOCTYPE|html|head|body|div|style)[^>]*>/i.test(reply)) {
-      console.warn('HTML in Claude reply blocked, re-routing to build');
+      console.warn('HTML in reply blocked, re-routing to build');
       const redetect = await detectIntent(text);
       await autoBuildWebsite({ ...redetect.felder, rawText: text }, chatId);
       return;
     }
 
     mem.saveConversation('alex', reply);
-    mem.logActivity(`Chat: ${text.slice(0, 60)}`);
-    await sendTelegram(`🤖 *Alex:*\n\n${reply}`, chatId);
+    mem.logActivity(`Chat [${model}]: ${text.slice(0, 60)}`);
+    await sendTelegram(reply, chatId);
   } catch (err) {
     console.error('Freitext error:', err.message);
     await sendTelegram(`❌ Fehler: ${err.message}`, chatId);
@@ -702,7 +1383,7 @@ app.get('/', (req, res) => {
 });
 
 // ── Polling ───────────────────────────────────────────────────
-const CMD_REGEX = /^\/(run|file|build|deploy|search|client|clients|log|task|tasks|done|idea|ideas|video|videos|videoidea|status|help)/i;
+const CMD_REGEX = /^\/(run|file|build|deploy|search|client|clients|log|task|tasks|done|idea|ideas|video|videos|videoidea|status|help|kunden|leads|umsatz|akquise|wiki|lint|index|claude|kimi|modell)/i;
 
 async function startPolling() {
   let offset = 0;
@@ -743,6 +1424,12 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`Alex v2 läuft auf Port ${PORT}`);
   tools.createDir(tools.PROJECTS_DIR);
+
+  // Vault beim Start laden und cachen (beide Modelle)
+  const vaultCore = getVaultCore();
+  console.log(`Brain Vault geladen: ${vaultCore.length} Zeichen`);
+  console.log(`Modelle: Claude (${ANTHROPIC_API_KEY ? 'OK' : 'FEHLT'}) | Kimi (${KIMI_API_KEY ? 'OK' : 'FEHLT'})`);
+
   const open = parseTasks().filter(t => !t.done).length;
   mem.logActivity('Agent gestartet');
   await sendTelegram(`🤖 *Alex v2 online.*\n📋 ${open} offene Tasks. Schreib /help für alle Befehle.`);
