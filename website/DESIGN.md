@@ -1,7 +1,7 @@
 # Design System: 030 Digital Berlin
 
 ## 1. Visual Theme & Atmosphere
-A confident, edgy Berlin-tech interface that feels like walking through a Kreuzberg co-working space at midnight — dark surfaces, warm accent lighting, raw but refined. The density is balanced (5/10), variance is high (8/10) with strong asymmetric layouts, and motion is fluid (6/10) with spring-physics interactions. The aesthetic is urban-professional: not corporate, not startup-playful — direct, credible, Berliner Schnauze in visual form.
+A confident, edgy Berlin-tech interface that feels like walking through a Kreuzberg co-working space at midnight — dark surfaces, warm accent lighting, raw but refined. The density is airy (3/10), variance is offset-asymmetric (5/10) with confident but restrained layouts, and motion is subtle (4/10) with purposeful spring-physics transitions — Apple/Wempe level confidence. The aesthetic is urban-professional: not corporate, not startup-playful — direct, credible, Berliner Schnauze in visual form.
 
 ## 2. Color Palette & Roles
 - **Void Surface** (#09090B) — Primary background, Zinc-950 depth
