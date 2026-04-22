@@ -169,6 +169,7 @@ function Navbar() {
     { label: 'Leistungen', href: '#leistungen' },
     { label: 'Warum wir', href: '#warum-wir' },
     { label: 'Demos', href: '#demos' },
+    { label: 'Showcase', href: '/showcase' },
     { label: 'Kontakt', href: '#kontakt' },
   ]
 
@@ -357,6 +358,30 @@ function Hero() {
         </div>
       </div>
     </section>
+  )
+}
+
+// ─── Showcase Banner ───
+function ShowcaseBanner() {
+  return (
+    <div className="max-w-[1200px] mx-auto px-6 pb-10">
+      <a
+        href="/showcase"
+        className="group flex items-center justify-between gap-4 p-5 rounded-xl border border-amber-600/20 bg-amber-600/[0.04] hover:border-amber-600/40 hover:bg-amber-600/[0.07] transition-all duration-200"
+      >
+        <div className="flex items-center gap-4">
+          <span className="shrink-0 px-2.5 py-1 rounded-full bg-amber-600 font-display font-bold text-[10px] text-void uppercase tracking-wide">
+            Neu
+          </span>
+          <span className="font-body text-sm sm:text-base text-chalk">
+            Demo-Beispiele für Ihr Gewerk ansehen — so könnte Ihre Website aussehen
+          </span>
+        </div>
+        <svg className="w-5 h-5 text-amber-600 shrink-0 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+        </svg>
+      </a>
+    </div>
   )
 }
 
@@ -703,6 +728,7 @@ function Footer() {
             </span>
           </div>
           <div className="flex items-center gap-6 text-sm font-body text-steel">
+            <a href="/showcase" className="hover:text-chalk transition-colors">Beispiele</a>
             <a href="#" className="hover:text-chalk transition-colors">Impressum</a>
             <a href="#" className="hover:text-chalk transition-colors">Datenschutz</a>
           </div>
@@ -719,6 +745,7 @@ export default function App() {
       <Navbar />
       <main>
         <Hero />
+        <ShowcaseBanner />
         <Pricing />
         <WhyUs />
         <Demos />
